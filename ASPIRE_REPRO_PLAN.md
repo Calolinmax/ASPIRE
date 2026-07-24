@@ -84,6 +84,16 @@ print('OK', sorted(obs.keys()))
 
 **已踩过的坑（2026-07-23）**：pip 默认装最新 mujoco（3.10.0），其 C API 有 breaking change，robosuite 1.5.2 初始化 OSC 控制器时报 `TypeError: mj_fullM(): incompatible function arguments`。**必须降级：`pip install "mujoco==3.3.*"`**（实装 3.3.7 验证通过）。
 
+**模块 2 踩坑记录（2026-07-24，Primitive API 实现）**——全部已在代码注释中固化：
+
+1. **robosuite transform_utils 全套是 xyzw**（quat2mat/mat2quat/quat_slerp/quat2axisangle），与 API 文档对用户暴露的 wxyz 约定冲突 → `primitives.py` 中 `_q_in`/`_q_out` 做边界转换，模块内部统一 xyzw。
+2. **`get_camera_segmentation` 多翻转一次**：mujoco 3.x render 已返回 row0=top 正向图，obs 的 RGB/depth 未翻转，但 segmentation 函数按老 OpenGL 假设翻了 `[::-1]` → 调用后再翻回一次对齐。
+3. **mujoco 相机系 y 轴向上**（图像 v 向下）→ 反投影 `y = -(v-cy)*z/fy`，不处理会致 z 系统性偏高 ~4cm（抓取目标点全错）。
+4. **`robot0_eef_quat` ≠ `robot0_eef_quat_site`**（不同 frame），姿态闭环必须用 `_site` 版本。
+5. **四元数 w 符号不规范化（w≥0）→ IK 在 π 附近振荡**；另需姿态同伦（slerp 分步）绕开 180° DLS 奇异性。
+6. **horizon=300 会被 move_to_pose 闭环吃满**（单次最多 160 步）→ horizon=1000 + engine 对 terminated episode 静默防御。
+7. **抓取基准用 min_z（点云 p5）而非 top_z**：可见面偏置使 top_z 系统偏高 ~1.3cm，夹上部易滑落（seed1 失败案例，正是 ASPIRE skill 提炼的典型原料）。
+
 ---
 
 ## 4. 12 小时计划分解
