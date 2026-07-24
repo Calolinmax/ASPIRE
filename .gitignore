@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 环境
+.env
+
+# 运行产物
+traces/
+*.log
+tmp/
+
+# IDE
+.vscode/
+.idea/
