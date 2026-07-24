@@ -1,12 +1,7 @@
-"""ASPIRE Primitive API 实现（复现版 v0.1）。
+"""ASPIRE Primitive API 实现（复现版 v0.2 - 双相机+MobileSAM视觉）。
 
 对应 docs/primitive_api.md 的契约。所有函数由 ExecutionEngine 注入任务代码
-的全局命名空间。感知为 GT 冒充版（语义层 ground truth，几何层真实渲染）。
-
-实现要点：
-- 运动：robosuite OSC_POSE 控制器闭环（位置+姿态 P 控制，阻塞式）
-- IK：mujoco 原生 Jacobian 阻尼最小二乘（独立 MjData，不污染源 sim）
-- GT 感知：mujoco segmentation 渲染（geom id 通道）+ body 名匹配
+的全局命名空间。感知为 MobileSAM（vit_t）GPU 分割。
 """
 
 from __future__ import annotations
@@ -19,11 +14,18 @@ import numpy as np
 from robosuite.utils import camera_utils as CU
 from robosuite.utils import transform_utils as T
 
+# 导入视觉模块（ONNX GPU版MobileSAM）
+from .vision_sam_onnx import segment_sam3_text_prompt, segment_sam3_point_prompt, warmup
+
 # ---------------------------------------------------------------------------
 # 常量
 # ---------------------------------------------------------------------------
-CAMERA_NAME = "agentview"
-IMG_H, IMG_W = 256, 256
+# 双相机配置
+CAMERAS = {
+    "agentview": {"name": "agentview", "h": 256, "w": 256},  # 顶部第三人称
+    "wrist": {"name": "robot0_eye_in_hand", "h": 256, "w": 256},  # 腕部相机
+}
+
 EEF_SITE = "gripper0_right_grip_site"
 ARM_JOINTS = [f"robot0_joint{i}" for i in range(1, 8)]
 
@@ -170,39 +172,76 @@ class PrimitiveContext:
         return mask.astype(np.uint8)
 
     # ------------------------------------------------------------------
-    # 1. 感知类
+    # 1. 感知类（双相机 + OpenCV 真实视觉）
     # ------------------------------------------------------------------
-    def get_observation(self) -> dict:
+    def get_observation(self, camera: str = "agentview") -> dict:
+        """
+        获取指定相机的观测。
+
+        参数:
+            camera: "agentview"(顶部) 或 "wrist"(腕部)
+
+        返回包含:
+            - robot0_eef_pos/quat: 末端位姿
+            - {camera}_image: RGB图像
+            - {camera}_depth: 深度图
+            - camera_intrinsics: 内参K
+            - camera_extrinsics: 外参E (cam→world)
+        """
         obs = dict(self.engine.obs)
-        obs["agentview_depth"] = self._real_depth()
-        K, E = self._camera_matrices()
+
+        # 确保请求的相机图像存在
+        if camera not in ["agentview", "wrist"]:
+            camera = "agentview"
+
+        img_key = f"{camera}_image"
+        depth_key = f"{camera}_depth"
+
+        # 如果环境没有该相机，渲染它
+        if img_key not in obs:
+            # 动态渲染
+            img, depth = self.engine.env.sim.render(
+                camera_name=CAMERAS[camera]["name"],
+                height=CAMERAS[camera]["h"],
+                width=CAMERAS[camera]["w"],
+                depth=True
+            )
+            obs[img_key] = img
+            obs[depth_key] = depth
+
+        # 转换深度为真实距离
+        if depth_key in obs:
+            d = obs[depth_key]
+            if d.ndim == 3:
+                d = d.squeeze(-1)
+            obs[depth_key] = CU.get_real_depth_map(self.sim, d)
+
+        # 相机参数
+        K = CU.get_camera_intrinsic_matrix(
+            self.sim, CAMERAS[camera]["name"],
+            CAMERAS[camera]["h"], CAMERAS[camera]["w"]
+        )
+        E = CU.get_camera_extrinsic_matrix(self.sim, CAMERAS[camera]["name"])
         obs["camera_intrinsics"] = K
         obs["camera_extrinsics"] = E
+        obs["active_camera"] = camera
+
         return obs
 
+    def segment_text(self, rgb, prompt) -> list[dict]:
+        """文本提示分割（MobileSAM GPU，模块顶部已导入 vision_sam_gpu）。"""
+        return segment_sam3_text_prompt(rgb, prompt)
+
+    def segment_point(self, rgb, point) -> list[dict]:
+        """点提示分割（MobileSAM GPU）"""
+        return segment_sam3_point_prompt(rgb, point)
+
+    # 兼容旧API
     def segment_sam3_text_prompt(self, rgb, prompt) -> list[dict]:
-        body = self._match_object(prompt)
-        if body is None:
-            return []
-        mask = self._mask_for_body(body)
-        if mask.sum() == 0:
-            return []
-        return [{"mask": mask, "score": 0.99}]
+        return self.segment_text(rgb, prompt)
 
     def segment_sam3_point_prompt(self, rgb, point) -> list[dict]:
-        u, v = int(round(point[0])), int(round(point[1]))
-        seg = self._segmentation()
-        if not (0 <= v < seg.shape[0] and 0 <= u < seg.shape[1]):
-            return []
-        gid = int(seg[v, u, 1])
-        if gid < 0:
-            return []
-        body_id = int(self.model.geom_bodyid[gid])
-        body_name = self.sim.model.body_names[body_id]
-        if body_name not in self._task_object_bodies():
-            return []
-        mask = self._mask_for_body(body_name)
-        return [{"mask": mask, "score": 0.99}] if mask.sum() > 0 else []
+        return self.segment_point(rgb, point)
 
     def point_prompt_molmo(self, rgb, prompt) -> dict:
         masks = self.segment_sam3_text_prompt(rgb, prompt)

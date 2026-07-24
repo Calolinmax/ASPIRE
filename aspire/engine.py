@@ -31,7 +31,7 @@ ENV_DEFAULTS = dict(
     has_renderer=False,
     has_offscreen_renderer=True,
     use_camera_obs=True,
-    camera_names="agentview",
+    camera_names=["agentview", "robot0_eye_in_hand"],  # 双相机：顶部 + 腕部
     camera_heights=256,
     camera_widths=256,
     camera_depths=True,
@@ -41,11 +41,18 @@ ENV_DEFAULTS = dict(
 
 
 class ExecutionEngine:
-    def __init__(self, task: str = "Lift", seed: int = 0, trace_root: str = "traces"):
+    def __init__(self, task: str = "Lift", seed: int = 0, trace_root: str = "traces",
+                 render: bool = False, render_slowdown: float = 1.0):
         self.task = task
         self.seed = seed
+        self.render = render
+        self.render_slowdown = render_slowdown  # 演示减速倍率（>1 更慢）
         np.random.seed(seed)
-        self.env = suite.make(task, **ENV_DEFAULTS)
+        kwargs = dict(ENV_DEFAULTS)
+        if render:
+            kwargs["has_renderer"] = True
+            kwargs["has_offscreen_renderer"] = True  # 视觉证据仍走离屏
+        self.env = suite.make(task, **kwargs)
         self.obs = self.env.reset()
         self.sim_step = 0
         self.gripper_cmd = -1.0  # 初始张开
@@ -60,6 +67,11 @@ class ExecutionEngine:
             return  # episode 已终止（如 horizon 用尽），静默忽略后续 step
         self.obs, _, done, _ = self.env.step(action)
         self.sim_step += 1
+        if self.render:
+            self.env.render()
+            if self.render_slowdown > 1.0:
+                import time as _time
+                _time.sleep(0.05 * (self.render_slowdown - 1.0) / 20 * 20)
         if done:
             self.terminated = True
 
@@ -107,12 +119,15 @@ def main():
     parser.add_argument("--task", default="Lift")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--trace-root", default="traces")
+    parser.add_argument("--render", action="store_true", help="打开可视化仿真器窗口实时演示")
+    parser.add_argument("--slow", type=float, default=1.0, help="演示减速倍率（如 2 = 半速）")
     args = parser.parse_args()
 
     with open(args.code, encoding="utf-8") as f:
         code = f.read()
 
-    engine = ExecutionEngine(task=args.task, seed=args.seed, trace_root=args.trace_root)
+    engine = ExecutionEngine(task=args.task, seed=args.seed, trace_root=args.trace_root,
+                             render=args.render, render_slowdown=args.slow)
     try:
         result = engine.run(code)
     finally:
@@ -129,6 +144,17 @@ def main():
     if result["error"]:
         print("--- error ---")
         print(result["error"])
+    if args.render:
+        import time as _time
+        print("（窗口保持 5 秒后关闭）")
+        try:
+            for _ in range(250):  # 保持窗口响应 ~5s
+                if engine.env.viewer is None:
+                    break
+                engine.env.render()
+                _time.sleep(0.02)
+        except (AttributeError, Exception):
+            pass  # viewer 已销毁（如用户手动关窗）
     # 供 harness 解析的退出码
     raise SystemExit(0 if result["success"] else 1)
 
