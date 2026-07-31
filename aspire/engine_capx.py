@@ -180,9 +180,33 @@ class ExecutionEngineCapx(ExecutionEngine):
                          render=render, render_slowdown=render_slowdown)
 
     def close(self):
+        # "关引擎必落盘" 不变量（2026-07-31 插队修复）:
+        # trace.json 原本只在基类 run() 末尾由 tracer.finalize() 写出（engine.py）；
+        # 直接驱动模式（cap-x 脚本驱动 engine 后 close, 如 cgn_verify_steps/
+        # cgn_execute_grasp）不经 run()，json 永远缺失（traces/0731_16* 那批
+        # 只有 images/ 的目录即此因）。此处兜底 finalize。
+        # 幂等: run() 路径已写（json 存在）或重复 close 都不重写；基类 run() 不动。
+        json_path = os.path.join(self.tracer.trace_dir, "trace.json")
+        if not getattr(self, "_trace_finalized", False) and not os.path.exists(json_path):
+            self._trace_finalized = True
+            try:
+                success = getattr(self, "_trace_success", None)
+                error = getattr(self, "_trace_error", None)
+                if success is None and error is None:
+                    error = ("direct-drive: 未经 run() 判定; 调用方可先调 "
+                             "mark_trace_result(success, error) 声明结果, "
+                             "未声明则 success=null")
+                self.tracer.finalize(success, error, getattr(self, "sim_step", 0))
+            except Exception as e:
+                print(f"[engine_capx.close] tracer.finalize 失败（不阻塞关闭）: {e}")
         super().close()
         # 仅 engine_capx.py main() 显式控制子进程生命周期；
         # 这里不终止，避免多个 engine 实例串行时反复启停。
+
+    def mark_trace_result(self, success, error=None):
+        """直接驱动模式下由调用方声明任务结果，close() 落盘 trace.json 时写入。"""
+        self._trace_success = success
+        self._trace_error = error
 
     # ------------------------------------------------------------------
     # 环境构造钩子

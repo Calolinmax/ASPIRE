@@ -119,25 +119,36 @@ def cgn_to_gripper(g_cgn, pose_mat, T_base_world=None):
     return g_final
 
 
-def filter_grasps_by_width(grasps, scores, openings, max_width=PIPER_MAX_WIDTH):
-    """可行性过滤：丢弃开度超过 Piper 上限的候选。
+def filter_grasps_by_width(grasps, scores, openings, contact_dist=0.04,
+                           max_width=PIPER_MAX_WIDTH, margin=0.004):
+    """可行性过滤：丢弃【需求开度】超过 Piper 上限的候选。
+
+    尺子（2026-07-31 裁决）：CGN 输出的 opening 是 Panda 几何（含 Panda 指垫
+    厚度）下的指尖开度，不是物理需求。物理需求 = 两接触点沿闭合轴间距 + 余量：
+        required_opening = contact_dist + margin   (margin 默认 2×2mm)
+    丢弃条件: required_opening > max_width。
 
     Args:
         grasps: (N,4,4) 候选位姿
         scores: (N,) 得分
-        openings: (N,) 预测开度（米）
-        max_width: Piper 最大开度（默认 PIPER_MAX_WIDTH）
+        openings: (N,) CGN 预测开度（仅记录用，不做丢弃依据）
+        contact_dist: 接触间距（米）。sim 阶段允许用方块 GT 尺寸：
+            cubeA 为 4cm 立方（axis-aligned），对面夹取接触间距 0.04m。
+            【TODO(真机): 从候选接触几何/点云沿闭合轴投影估算，勿用 GT】
+        max_width: Piper 最大开度（默认 PIPER_MAX_WIDTH=0.045）
+        margin: 余量（默认 0.004 = 2×2mm）
 
     Returns:
         (grasps, scores, openings) 过滤后的三元组（保持输入顺序）
     """
     if len(grasps) == 0:
         return grasps, scores, openings
-    keep = openings <= max_width
+    required = contact_dist + margin
+    keep = np.ones(len(grasps), dtype=bool) if required <= max_width else np.zeros(len(grasps), dtype=bool)
     n_drop = int((~keep).sum())
     if n_drop:
         print(f"[filter_grasps_by_width] dropped_by_width: {n_drop} 个候选 "
-              f"(opening > {max_width}m): {np.asarray(openings)[~keep].round(4).tolist()}")
+              f"(required_opening {required:.3f}m > {max_width}m)")
     return grasps[keep], scores[keep], openings[keep]
 
 
