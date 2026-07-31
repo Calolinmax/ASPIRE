@@ -196,6 +196,10 @@ class StackClutter(suite.environments.manipulation.stack.Stack):
                                rgba=[1, 0, 0, 1], material=redwood)
         self.cubeB = BoxObject(name="cubeB", size_min=[0.025, 0.025, 0.025], size_max=[0.025, 0.025, 0.025],
                                rgba=[0, 1, 0, 1], material=greenwood)
+        # 杂物尺寸软约束（P4, 面向未来多物体任务）: 新增杂物尽量至少有一个
+        # 维度 ≤4cm —— 让杂物本身也可被 Piper 抓取（净开度 4.49cm）。
+        # 不强制、不影响现有布局与 seed 复现; 当前 dist_box2(6cm)/dist_cyl
+        # 部分维度超限仅作背景, 其抓取由宽度过滤自然淘汰。
         self.distractors = [
             BoxObject(name="dist_box1", size_min=[0.02, 0.02, 0.03], size_max=[0.02, 0.02, 0.03],
                       rgba=[0.1, 0.25, 0.8, 1]),
