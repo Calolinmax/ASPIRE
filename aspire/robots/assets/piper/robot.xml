@@ -1,0 +1,254 @@
+<mujoco model="piper_robot">
+  <!-- AgileX Piper 6-DoF arm (robosuite 适配版, 无夹爪 —— 夹爪在 gripper.xml)
+       来源: external/agilex_arm_mujoco/agilex_arm/agilex_piper/piper.xml
+       适配:
+         1. link7/link8(手指) 拆到 gripper.xml, 由 robosuite GripperModel 挂到 link6
+         2. 增加 robotview 第三人称相机 (targetbody 对准工作区) 与 eye_in_hand 腕部相机,
+            robosuite 前缀后得名 robot0_robotview / robot0_eye_in_hand (与 Panda 同名)
+         3. 执行器/关节范围/惯量与原 MJCF 完全一致 -->
+  <compiler angle="radian"/>
+
+  <!-- 注意: <visual><global offwidth/offheight> 在 robosuite ManipulationTask
+       合并 MJCF 时会被丢弃（实测 readback 仍为 640×480）——离屏缓冲区尺寸
+       由 engine_capx._make_env 程序化预置为 1280×960, 勿在此重复配置。 -->
+
+  <asset>
+    <material name="gray_mat" rgba="0.59 0.59 0.59 1"/>
+    <material name="light_gray_mat" rgba="0.98 0.98 0.98 1"/>
+    <material name="light_medium_gray_mat" rgba="0.85 0.85 0.85 1"/>
+    <material name="dark_gray_mat" rgba="0.086 0.086 0.086 1"/>
+    <material name="darker_gray_mat" rgba="0.14 0.14 0.14 1"/>
+    <material name="white_mat" rgba="1 1 1 1"/>
+    <material name="red_mat" rgba="0.82 0.15 0.15 1"/>
+    <material name="black_mat" rgba="0 0 0 1"/>
+    <material name="light_blue" rgba="0.79 0.82 0.93 1"/>
+
+    <mesh name="link2_0" file="link2_0.obj"/>
+    <mesh name="link2_1" file="link2_1.obj"/>
+    <mesh name="link2_2" file="link2_2.obj"/>
+    <mesh name="link2_3" file="link2_3.obj"/>
+    <mesh name="link2_4" file="link2_4.obj"/>
+    <mesh name="link2_5" file="link2_5.obj"/>
+    <mesh name="link2_6" file="link2_6.obj"/>
+    <mesh name="link2_7" file="link2_7.obj"/>
+    <mesh name="link2_8" file="link2_8.obj"/>
+    <mesh name="link2_9" file="link2_9.obj"/>
+    <mesh name="link2_10" file="link2_10.obj"/>
+    <mesh name="link2_11" file="link2_11.obj"/>
+    <mesh name="link2_12" file="link2_12.obj"/>
+    <mesh name="link2_13" file="link2_13.obj"/>
+    <mesh name="link2_14" file="link2_14.obj"/>
+    <mesh name="link2_15" file="link2_15.obj"/>
+    <mesh name="link2_16" file="link2_16.obj"/>
+    <mesh name="link2_17" file="link2_17.obj"/>
+    <mesh name="link2_18" file="link2_18.obj"/>
+    <mesh name="link2_19" file="link2_19.obj"/>
+    <mesh name="link2_20" file="link2_20.obj"/>
+    <mesh name="link2_21" file="link2_21.obj"/>
+    <mesh name="link2_22" file="link2_22.obj"/>
+    <mesh name="link2_23" file="link2_23.obj"/>
+    <mesh name="link2_24" file="link2_24.obj"/>
+    <mesh name="link2_25" file="link2_25.obj"/>
+    <mesh name="link2_26" file="link2_26.obj"/>
+    <mesh name="link2_27" file="link2_27.obj"/>
+    <mesh name="link2_28" file="link2_28.obj"/>
+    <mesh name="link2_29" file="link2_29.obj"/>
+    <mesh name="link2_30" file="link2_30.obj"/>
+    <mesh name="link2_31" file="link2_31.obj"/>
+    <mesh name="link3_0" file="link3_0.obj"/>
+    <mesh name="link3_1" file="link3_1.obj"/>
+    <mesh name="link3_2" file="link3_2.obj"/>
+    <mesh name="link3_3" file="link3_3.obj"/>
+    <mesh name="link3_4" file="link3_4.obj"/>
+    <mesh name="link3_5" file="link3_5.obj"/>
+    <mesh name="link3_7" file="link3_7.obj"/>
+    <mesh name="link3_8" file="link3_8.obj"/>
+    <mesh name="link3_9" file="link3_9.obj"/>
+    <mesh name="link3_10" file="link3_10.obj"/>
+    <mesh name="link3_11" file="link3_11.obj"/>
+    <mesh name="link3_12" file="link3_12.obj"/>
+    <mesh name="link3_13" file="link3_13.obj"/>
+    <mesh name="link3_14" file="link3_14.obj"/>
+    <mesh name="link3_15" file="link3_15.obj"/>
+    <mesh name="link3_16" file="link3_16.obj"/>
+    <mesh name="link3_17" file="link3_17.obj"/>
+    <mesh name="link3_18" file="link3_18.obj"/>
+    <mesh name="link3_19" file="link3_19.obj"/>
+    <mesh name="link3_20" file="link3_20.obj"/>
+    <mesh name="link3_21" file="link3_21.obj"/>
+    <mesh name="link3_22" file="link3_22.obj"/>
+    <mesh name="link3_23" file="link3_23.obj"/>
+    <mesh name="link3_24" file="link3_24.obj"/>
+    <mesh name="link3_25" file="link3_25.obj"/>
+    <mesh name="link3_26" file="link3_26.obj"/>
+    <mesh name="link3_27" file="link3_27.obj"/>
+    <mesh name="link3_28" file="link3_28.obj"/>
+    <mesh name="link4_2" file="link4_2.obj"/>
+    <mesh name="link4_3" file="link4_3.obj"/>
+    <mesh name="link4_4" file="link4_4.obj"/>
+    <mesh name="link4_5" file="link4_5.obj"/>
+    <mesh name="link4_6" file="link4_6.obj"/>
+    <mesh name="link5_2" file="link5_2.obj"/>
+    <mesh name="link5_3" file="link5_3.obj"/>
+    <mesh name="link5_4" file="link5_4.obj"/>
+    <mesh name="link5_5" file="link5_5.obj"/>
+    <mesh name="link5_6" file="link5_6.obj"/>
+    <mesh name="link5_7" file="link5_7.obj"/>
+    <mesh name="link5_8" file="link5_8.obj"/>
+    <mesh name="base_link" file="base_link.stl"/>
+    <mesh name="link1" file="link1.stl"/>
+    <mesh name="link2" file="link2.stl"/>
+    <mesh name="link2_gray" file="link2_gray.stl"/>
+    <mesh name="link3" file="link3.stl"/>
+    <mesh name="link4" file="link4.stl"/>
+    <mesh name="link5" file="link5.stl"/>
+    <mesh name="link6" file="link6.stl"/>
+  </asset>
+
+  <worldbody>
+    <body name="base_link" gravcomp="1">
+      <inertial pos="-0.00979275 1.82906e-06 0.04101" quat="0.692988 -0.137524 -0.137826 0.69416" mass="0.162549"
+        diaginertia="0.000269445 0.000227478 0.000221437"/>
+      <geom group="1" type="mesh" contype="0" conaffinity="0" density="0" mesh="base_link" material="gray_mat"/>
+      <geom group="0" type="mesh" mesh="base_link"/>
+      <!-- 控制器基座参考系 (robosuite 复合控制器要求 {arm}_center) -->
+      <site name="right_center" pos="0 0 0" size="0.01" rgba="1 0.3 0.3 1" group="1"/>
+
+      <!-- 第三人称相机: 视线方向与 robosuite agentview 完全一致 (quat 直接复用,
+           base_link 无旋转故局部系=世界系平移), 位置按 Piper 工作区尺度平移缩放。
+           基座在桌面上 (z=0.80) 时, 相机世界位 ≈ (0.48, 0, 1.23), 看向工作区中心。
+           A0.5 调整: 拉近10cm (pos 0.78->0.68), 顺时针旋转180度 -->
+      <camera name="robotview" mode="fixed" pos="0.68 0 0.46" quat="0.653 -0.271 0.271 -0.653" fovy="60"/>
+
+      <body name="link1" pos="0 0 0.123" quat="0.707105 0 0 -0.707108" gravcomp="1">
+        <inertial pos="0.00131676 0.000310289 -0.00922875" quat="0.557105 0.432155 0.377373 0.600388" mass="0.097868"
+          diaginertia="9.25942e-05 8.3083e-05 7.69469e-05"/>
+        <joint frictionloss="0.3" armature="0.005" name="joint1" axis="0 0 1" range="-2.618 2.618"/>
+        <geom group="1" type="mesh" contype="0" conaffinity="0" density="0" mesh="link1" material="gray_mat"/>
+        <geom group="0" type="mesh" mesh="link1"/>
+        <body name="link2" quat="0.499998 0.5 -0.500002 -0.5" gravcomp="1">
+          <inertial pos="0.148794 -0.00242027 0.00175155" quat="-0.0249063 0.70684 0.00803509 0.706889" mass="0.290889"
+            diaginertia="0.00177549 0.00173142 0.00014552"/>
+          <joint frictionloss="0.3" armature="0.005" name="joint2" axis="0 0 1" range="0 3.14"/>
+          <geom mesh="link2_0" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_1" material="darker_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_2" material="darker_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_3" material="dark_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_4" material="dark_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_5" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_6" material="dark_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_7" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_8" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_9" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_10" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_11" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_12" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_13" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_14" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_15" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_16" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_17" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_18" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_19" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_20" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_21" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_22" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_23" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_24" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_25" material="dark_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_26" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_27" material="darker_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_28" material="darker_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_29" material="darker_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_30" material="darker_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2_31" material="light_medium_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+          <geom mesh="link2" group="0" type="mesh"/>
+          <body name="link3" pos="0.28358 0.028726 0" quat="0.998726 0 0 0.0504536" gravcomp="1">
+            <inertial pos="-0.0996835 0.0349477 0.000508026" quat="0.0777021 0.702287 -0.0990541 0.700674"
+              mass="0.290848" diaginertia="0.000241946 0.000222224 0.000100384"/>
+            <joint frictionloss="0.3" armature="0.005" name="joint3" pos="0 0 0" axis="0 0 1" range="-2.697 0"/>
+            <geom mesh="link3_0" material="darker_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_1" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_2" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_3" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_4" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_5" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_7" material="darker_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_8" material="white_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_9" material="red_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_10" material="white_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_11" material="white_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_12" material="white_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_13" material="white_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_14" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_15" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_16" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_17" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_18" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_19" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_20" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_21" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_22" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_23" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_24" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_25" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_26" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_27" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3_28" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+            <geom mesh="link3" group="0" type="mesh"/>
+            <body name="link4" pos="-0.24221 0.068514 0" quat="0.544767 -0.544769 -0.450809 0.450808" gravcomp="1">
+              <inertial pos="0.000276465 -0.00102804 -0.00472831" quat="0.492305 0.505285 0.503294 0.499017"
+                mass="0.127087" diaginertia="4.87057e-05 4.10595e-05 3.82001e-05"/>
+              <joint frictionloss="0.3" armature="0.005" name="joint4" axis="0 0 1" range="-1.832 1.832"/>
+              <geom mesh="link4_2" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+              <geom mesh="link4_3" material="darker_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+              <geom mesh="link4_4" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+              <geom mesh="link4_5" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+              <geom mesh="link4_6" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+              <geom mesh="link4" group="0" type="mesh"/>
+              <body name="link5" quat="0.707105 0.707108 0 0" gravcomp="1">
+                <inertial pos="8.82262e-05 0.0566829 -0.0019612" quat="0.507447 0.490986 0.506887 0.494466"
+                  mass="0.144711" diaginertia="0.001 0.001 0.001"/>
+                <joint frictionloss="0.3" armature="0.005" name="joint5" axis="0 0 1" range="-1.22 1.22"/>
+                <geom mesh="link5_2" material="black_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+                <geom mesh="link5_3" material="black_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+                <geom mesh="link5_4" material="darker_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+                <geom mesh="link5_5" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+                <geom mesh="link5_6" material="light_gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+                <geom mesh="link5_7" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+                <geom mesh="link5_8" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+                <geom mesh="link5" group="0" type="mesh"/>
+                <body name="link6" pos="0 0.091 0.0014165" quat="0 0 -0.707105 -0.707108" gravcomp="1">
+                  <inertial pos="0.0010312 0.0121761 0.0315481" quat="0.0230402 0.707091 0.0373344 0.70576" mass="1.2"
+                    diaginertia="0.001 0.001 0.001"/>
+                  <joint frictionloss="0.3" armature="0.005" name="joint6" axis="0 0 1" range="-3.14 3.14"/>
+                  <geom quat="0.707105 0 0 0.707108" mesh="link6" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+                  <geom quat="0.707105 0 0 0.707108" mesh="link6" group="0" type="mesh"/>
+                  <!-- 腕部相机: 装在 link6 (夹爪基部), 向 -z 方向看指尖/工作区
+                       位置: 从 link6 原点向肩侧偏移 2cm、向上 5cm (避开夹爪本体)
+                       朝向: quat="0 0 1 0" (绕 y 轴 180°) 使相机 +z 轴指向 link6 -z (指尖方向)
+                       A0.5 调整: 逆时针旋转90度 (绕光轴) -->
+                  <camera name="eye_in_hand" mode="fixed" pos="-0.02 0 0.05" quat="0 0.707 0.707 0" fovy="75"/>
+                  <!-- link7/link8 (手指) 由 gripper.xml 挂载到本 body -->
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <contact>
+    <exclude body1="base_link" body2="link1"/>
+  </contact>
+
+  <actuator>
+    <position name="joint1" joint="joint1" inheritrange="1" forcerange="-100 100" kp="80" kv="5"/>
+    <position name="joint2" joint="joint2" inheritrange="1" forcerange="-100 100" kp="80" kv="5"/>
+    <position name="joint3" joint="joint3" inheritrange="1" forcerange="-100 100" kp="80" kv="5"/>
+    <position name="joint4" joint="joint4" inheritrange="1" forcerange="-100 100" kp="40" kv="5"/>
+    <position name="joint5" joint="joint5" inheritrange="1" forcerange="-100 100" kp="10" kv="1.5"/>
+    <position name="joint6" joint="joint6" inheritrange="1" forcerange="-100 100" kp="10" kv="1.5"/>
+  </actuator>
+</mujoco>

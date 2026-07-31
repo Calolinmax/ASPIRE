@@ -218,8 +218,8 @@ class ExecutionEngineCapx(ExecutionEngine):
             has_offscreen_renderer=True,
             use_camera_obs=True,
             camera_names=list(PIPER_CAMERAS),
-            camera_heights=256,
-            camera_widths=256,
+            camera_heights=640,
+            camera_widths=640,
             camera_depths=True,
             control_freq=20,
             horizon=4000,
@@ -235,6 +235,12 @@ class ExecutionEngineCapx(ExecutionEngine):
             env = StackClutter(**kwargs)
         else:
             env = suite.make(self.task, **kwargs)
+        # 预置离屏缓冲区 1280×960: MJCF <visual> 在 robosuite 合并时被丢弃
+        # (实测 readback 640×480), 程序化设置才生效。首个超限 render 由
+        # robosuite update_offscreen_size 一次性重建 context 到该尺寸
+        # (max(请求, 预置)), 之后任何 ≤1280×960 的渲染不再重建。
+        env.sim.model._model.vis.global_.offwidth = 1280
+        env.sim.model._model.vis.global_.offheight = 960
         # cap-x 同款做法: 建 env 后替换放置采样器（范围按 Piper 臂展适配）
         if hasattr(env, "cubeA"):
             mujoco_objects = [env.cubeA, env.cubeB]
