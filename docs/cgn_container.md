@@ -153,7 +153,30 @@ ASPIRE 的 sim 输入（单方块 + 空桌面 + 零噪声深度）相对训练�
      >2.5mm 时下降过程指垫会蹭方块——sim 可接受（蹭正/轻推），候选按
      score 降序尝试；真机阶段这是标定精度的硬指标，届时再议。
 
-## 7. 文件清单
+## 7. 感知算法接入规范（长期规则）
+
+今后任何新接入的检测/感知算法，**入 trace 的标注图是接入定义的一部分，
+没有标注图不算接入完成**（含"未检出"帧——那是失败定位的关键证据）。
+照 SAM3/CGN 现有模式：primitive 注册进 `trace.py` CATEGORIES/ALGO_FOLDERS +
+`annotate.py` 对应分支 + `PrimitiveContextCapx` 包装 + `build_namespace` 挂载，
+`record.annotation` 由 `tracer.record` 自动链接。
+
+## 8. 相机分辨率 640（2026-07-31 转正）
+
+- 分辨率 256→640，方块 ~15-20px → ~38px。K 自动缩放已复核
+  （f = W/2/tan(30°)，640 下 554.26）。
+- **离屏缓冲区**：`<visual><global offwidth offheight>` 在 robosuite
+  ManipulationTask 合并 MJCF 时会被丢弃（实测 readback 仍 640×480）——
+  由 `engine_capx._make_env` 程序化预置 1280×960；首个超限 render 时
+  robosuite `update_offscreen_size` 一次性重建 context（已验证干净），
+  之后 ≤1280×960 渲染不再重建。**不要**在 XML 里重复配置。
+- 质量增益（seed 5 同场景）：cube_max 0.41→0.82（逼近官方场景水平），
+  cube≥0.23 点数 11→25，召回基线 ~15-25% → 10/10 全出候选。
+- EGL 稳定性：640×10 seeds 全过、零渲染异常、每 run 48–65s。
+  512px 高频渲染 context 错乱旧病（engine.py:195）在 640 未复现，
+  但若复现按"立即停止并汇报"处置，不硬扛不静默重试。
+
+## 9. 文件清单
 
 | 位置 | 说明 |
 |------|------|
