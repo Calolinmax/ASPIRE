@@ -142,11 +142,17 @@ def build_annotation(name, args, out):
                 _text(vis, ["CGN: 0 candidates"])
                 return vis
             n_shown = 0
+            best_vert_i = -1
+            best_vert_v = -1.0
             for i in range(min(3, len(grasps))):
                 g = np.asarray(grasps[i], float)
                 O, R = g[:3, 3], g[:3, :3]
                 C = O + R[:, 2] * 0.1034  # palm→指尖接触面（CGN 约定, GRIPPER_DEPTH_PANDA）
                 color = _MASK_COLORS[n_shown % len(_MASK_COLORS)]
+                # 垂直度代理（P2）: cam 系 |approach·(0,1,0)|, OpenCV y↓≈世界下
+                vert = float(abs(R[:, 2][1]))
+                if vert > best_vert_v:
+                    best_vert_v, best_vert_i = vert, i
                 # 剪影画法（2026-07-31 P1, 取代线框 glyph）: Panda 双指点云
                 # 随候选位姿变换到相机系撒点（top1 半径 2 加重, top2/3 半径 1）——
                 # 真手轮廓罩在目标上, 不再手画线。
@@ -166,6 +172,16 @@ def build_annotation(name, args, out):
                                 (int(round(pc_c[0])) + 3, int(round(pc_c[1])) - 3),
                                 _FONT, 0.34, color, 1, cv2.LINE_AA)
                 n_shown += 1
+            # P2: 标记最垂直候选（画圈+REC）——用户判读"有没有垂直抓"的锚点
+            if best_vert_i >= 0:
+                g = np.asarray(grasps[best_vert_i], float)
+                C = g[:3, 3] + g[:3, :3][:, 2] * 0.1034
+                pc_c = _project(K, C)
+                if pc_c is not None:
+                    ctr = (int(round(pc_c[0])), int(round(pc_c[1])))
+                    cv2.circle(vis, ctr, 10, (255, 80, 255), 1, cv2.LINE_AA)
+                    cv2.putText(vis, "REC", (ctr[0] + 12, ctr[1] + 4),
+                                _FONT, 0.4, (255, 80, 255), 1, cv2.LINE_AA)
             _text(vis, [f"grasp_cgn: {len(grasps)} cand"])
             return vis
         if name == "mask_to_world_points":
