@@ -119,17 +119,27 @@ def build_annotation(name, args, out):
                 X, Z = R[:, 0], R[:, 2]
                 w = float(openings[i]) if openings is not None and len(openings) > i else 0.05
                 C = O + Z * 0.1034  # palm→指尖接触面（CGN 约定, GRIPPER_DEPTH_PANDA）
-                segs = [(O, C),
-                        (O + X * w / 2, C + X * w / 2),
-                        (O - X * w / 2, C - X * w / 2),
-                        (C - X * w / 2, C + X * w / 2)]
-                proj = [(_project(K, a), _project(K, b)) for a, b in segs]
+                # glyph 画法（2026-07-31 可读性改进，只改画法不动数据）:
+                # 尾线 O→C 带箭头指向接触面（读出"从上往下接近"）;
+                # 指线只画靠近 C 的最后 2cm 一段; 闭合横杠 2px。
+                # 投影/坐标逻辑（_project、C = O + Z*0.1034）不变。
+                tail = (O, C)
+                fingers = [(C - Z * 0.02 + X * w / 2, C + X * w / 2),
+                           (C - Z * 0.02 - X * w / 2, C - X * w / 2)]
+                bar = (C - X * w / 2, C + X * w / 2)
+                proj = [(_project(K, a), _project(K, b)) for a, b in [tail] + fingers + [bar]]
                 if any(pa is None or pb is None for pa, pb in proj):
                     continue
                 color = _MASK_COLORS[n_shown % len(_MASK_COLORS)]
-                for pa, pb in proj:
-                    cv2.line(vis, (int(round(pa[0])), int(round(pa[1]))),
-                             (int(round(pb[0])), int(round(pb[1]))), color, 1)
+
+                def _px(p):
+                    return (int(round(p[0])), int(round(p[1])))
+
+                (ta, tb), (f1a, f1b), (f2a, f2b), (ba, bb) = proj
+                cv2.arrowedLine(vis, _px(ta), _px(tb), color, 1, cv2.LINE_AA, 0, 0.15)
+                cv2.line(vis, _px(f1a), _px(f1b), color, 1, cv2.LINE_AA)
+                cv2.line(vis, _px(f2a), _px(f2b), color, 1, cv2.LINE_AA)
+                cv2.line(vis, _px(ba), _px(bb), color, 2, cv2.LINE_AA)
                 pc = _project(K, C)
                 _cross(vis, pc[0], pc[1], color)
                 cv2.putText(vis, f"{float(scores[i]):.2f}",
