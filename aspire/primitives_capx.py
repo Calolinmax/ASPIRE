@@ -55,23 +55,48 @@ GRIPPER_SETTLE_TICKS = 15
 GRASP_N_YAW = 8           # 绕逼近轴的偏航候选数
 GRASP_CENTER_DROP = 0.02  # 可见顶面 → 估计中心的下探量 (m)
 
-# CGN 坐标变换参数
-GRIPPER_DEPTH = 0.1034    # 官方值，base→contact point
+# CGN 坐标变换参数（两层常量分开，勿合并 —— 2026-07-31 变换链调试结论）
+#
+# 层 1（Panda 约定层）: CGN 输出的物理含义。
+#   pred_grasps_cam 4x4 直接把 Panda gripper 模型整体放置（官方可视化
+#   draw_grasps/plot_mesh 证实）：原点 = hand base(palm)，局部 +z = 逼近方向
+#   (腕部→指尖)，指尖垫接触平面在局部 +z GRIPPER_DEPTH_PANDA 处
+#   （0.1034 为接触面，物理指尖尖端实测 0.1122 = 0.0584+finger.stl z_max 0.0538）。
+GRIPPER_DEPTH_PANDA = 0.1034
+#
+# 层 2（Piper 实测层）: 抓取点(指尖接触面) → Piper TCP 的偏移。
+#   Piper grip_site 由 gripper.xml 的 eef body 定义在「指尖垫接触面中点」
+#   (eef pos="0 0 -0.045" 即接触平面，quat 翻转使 site z=逼近方向、y=开合轴)，
+#   与 CGN 的指尖接触平面语义同一点 → 偏移为 0。
+TCP_DEPTH_PIPER = 0.0
+#
+# Piper 最大开度（可行性过滤上限）：joint7 range [0, 0.035]/指（gripper.xml），
+# 双指全开嘴内净距约 45mm（gripper.xml 注释，原模型实测），取净距为上限。
+PIPER_MAX_WIDTH = 0.045
+
+GRIPPER_DEPTH = GRIPPER_DEPTH_PANDA  # 兼容旧引用（勿新增使用）
 
 
 def cgn_to_gripper(g_cgn, pose_mat, T_base_world=None):
-    """CGN 相机系位姿 → 基座系 TCP 位姿。
+    """CGN 相机系位姿 → 基座系 Piper grip_site 位姿。
 
-    在我们的坐标系中，pose_mat 来自 get_observation，已经是 cam→base（真刚体）。
-    T_base_world 保留以兼容验证脚本签名，在此坐标系下不使用。
+    坐标链（2026-07-31 调试定型）：
+      Step 1: OpenCV→OpenGL（Y 轴翻转；MuJoCo 相机约定）
+      Step 2: cam→base（pose_mat 真刚体）
+      Step 3: 手指轴对齐：CGN 局部 x = Panda 开合轴 → Piper grip_site y = 开合轴，
+              绕局部 z 转 -90°（robosuite xyzw 序四元数）
+      Step 4: palm → 指尖接触平面：沿局部 +z（逼近方向）平移
+              GRIPPER_DEPTH_PANDA - TCP_DEPTH_PIPER。
+              【历史 bug：曾写 -0.1034，把 palm 往后撤了 0.1034，与正确值
+              差 2×0.1034≈+0.207m —— 即观测到的 z 系统性 +20cm】
 
     Args:
-        g_cgn: (4,4) CGN 输出，OpenCV 相机系
+        g_cgn: (4,4) CGN 输出，OpenCV 相机系（原点 palm，+z 逼近）
         pose_mat: (4,4) 相机外参（cam→base）
         T_base_world: 未使用（兼容参数）
 
     Returns:
-        (4,4) 基座系 grip_site 位姿
+        (4,4) 基座系 grip_site 位姿（位置 = 指尖接触面中点 = 抓取点）
     """
     # Step 1: OpenCV→OpenGL（Y轴翻转）
     T_flip = np.diag([1, -1, 1, 1])
@@ -80,18 +105,40 @@ def cgn_to_gripper(g_cgn, pose_mat, T_base_world=None):
     # Step 2: 相机系→基座系（pose_mat 已经是 cam→base）
     g_base = pose_mat @ g_gl
 
-    # Step 3: 手指轴对齐（CGN-X→gripper-Y，绕 Z 转 -90°）
+    # Step 3: 手指轴对齐（CGN-X 开合轴→Piper grip_site-Y 开合轴，绕 Z 转 -90°）
     R_z = T.quat2mat([0.0, 0.0, -0.707, 0.707])  # robosuite xyzw 序, 绕 Z 转 -90°
     T_align = np.eye(4)
     T_align[:3, :3] = R_z
     g_grip = g_base @ T_align
 
-    # Step 4: gripper base→contact point（沿 -Z 移 0.1034m）
+    # Step 4: palm → 指尖接触平面(= Piper grip_site)，沿局部 +z（逼近方向）
     T_offset = np.eye(4)
-    T_offset[2, 3] = -GRIPPER_DEPTH
+    T_offset[2, 3] = GRIPPER_DEPTH_PANDA - TCP_DEPTH_PIPER
     g_final = g_grip @ T_offset
 
     return g_final
+
+
+def filter_grasps_by_width(grasps, scores, openings, max_width=PIPER_MAX_WIDTH):
+    """可行性过滤：丢弃开度超过 Piper 上限的候选。
+
+    Args:
+        grasps: (N,4,4) 候选位姿
+        scores: (N,) 得分
+        openings: (N,) 预测开度（米）
+        max_width: Piper 最大开度（默认 PIPER_MAX_WIDTH）
+
+    Returns:
+        (grasps, scores, openings) 过滤后的三元组（保持输入顺序）
+    """
+    if len(grasps) == 0:
+        return grasps, scores, openings
+    keep = openings <= max_width
+    n_drop = int((~keep).sum())
+    if n_drop:
+        print(f"[filter_grasps_by_width] dropped_by_width: {n_drop} 个候选 "
+              f"(opening > {max_width}m): {np.asarray(openings)[~keep].round(4).tolist()}")
+    return grasps[keep], scores[keep], openings[keep]
 
 
 def mask_point_cloud_center(depth: np.ndarray, K: np.ndarray, seg: np.ndarray,

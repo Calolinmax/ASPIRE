@@ -58,8 +58,8 @@ def segment_sam3_point_prompt(rgb, point) -> list[dict]:
 # CGN 服务客户端（端口 8117）
 # ---------------------------------------------------------------------------
 
-def grasp_cgn(depth, K, seg, z_range=(0.2, 2.0), forward_passes=1):
-    """调用 CGN 服务，返回 (grasps, scores)。
+def grasp_cgn(depth, K, seg, z_range=(0.2, 2.0), forward_passes=1, return_openings=False):
+    """调用 CGN 服务，返回 (grasps, scores)（或加 openings）。
 
     Args:
         depth: (H, W) 深度图，单位米
@@ -69,10 +69,13 @@ def grasp_cgn(depth, K, seg, z_range=(0.2, 2.0), forward_passes=1):
         forward_passes: 前向传播次数（候选数）。【当前仅支持 1】——
             服务端计算图按 batch_size=1 构建，传 >1 会在服务端以
             "Cannot feed value of shape (N, 20000, 3)" 失败，故此处直接拦截。
+        return_openings: 为 True 时返回三元组 (grasps, scores, openings)，
+            openings 为每个候选的预测夹爪开度 (N,) 米（服务端 2026-07-31 起提供）。
 
     Returns:
         grasps: (N, 4, 4) numpy 数组，相机系位姿
         scores: (N,) numpy 数组，得分
+        openings: (N,) numpy 数组（仅 return_openings=True）
     """
     if forward_passes != 1:
         raise ValueError(
@@ -97,4 +100,9 @@ def grasp_cgn(depth, K, seg, z_range=(0.2, 2.0), forward_passes=1):
         raise RuntimeError(f"cgn_server: {out['error']}")
 
     import numpy as np
-    return np.array(out["grasps"]), np.array(out["scores"])
+    grasps = np.array(out["grasps"])
+    scores = np.array(out["scores"])
+    if return_openings:
+        openings = np.array(out.get("openings", np.zeros(len(scores), dtype=np.float32)))
+        return grasps, scores, openings
+    return grasps, scores

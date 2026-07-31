@@ -119,15 +119,31 @@ ASPIRE 的 sim 输入（单方块 + 空桌面 + 零噪声深度）相对训练�
 - 调阈值旋钮：`--arg_configs TEST.first_thres:0.19 TEST.second_thres:0.15`
   （当前 0.23/0.18），服务端 `wrapper.py` 未暴露，需要时再议。
 
-### 已知缺口：cgn_to_gripper 坐标变换链（首次出候选后暴露）
+### cgn_to_gripper 坐标变换链（2026-07-31 已修复并验收）
 
-变换链在 0 候选时代从未被真实数据执行过。杂物场景首次出候选后实测
-（`scripts/cgn_probe_clutter.py` 5 连跑，2 次出候选）：
+变换链在 0 候选时代从未被真实数据执行，首次出候选时暴露系统性 z 偏高
++20cm（≈2×0.1034）。调试结论：
 
-- **姿态 D3 = 0.94–0.996**（top-down 正确）✓
-- **位置系统性偏差**：z 高约 +20cm（≈2×`GRIPPER_DEPTH` 0.1034 的特征），
-  x 偏 3–5cm，y 基本吻合。怀疑点在 `cgn_to_gripper` 的 TCP 偏移方向/次数，
-  待专项调试（未归因，原始数据见任务记录）。
+- **CGN 输出约定**（官方 draw_grasps/plot_mesh 反推）：`pred_grasps_cam` 4×4
+  直接放置 Panda 夹爪模型——原点 = palm，局部 +z = 逼近方向，指尖接触平面
+  在局部 +z **0.1034**（物理指尖尖端 0.1122 = 0.0584+finger.stl z_max 0.0538）。
+- **Piper 实测**（gripper.xml + sim 实测）：`grip_site` 由 `eef` body 定义在
+  指尖垫接触面中点（site z=逼近方向、y=开合轴）→ `TCP_DEPTH_PIPER = 0`。
+  最大开度：joint7 range [0,0.035]/指，sim 满量程实测两指垫中心距 0.0749m、
+  **内净距 0.0449m** → `PIPER_MAX_WIDTH = 0.045`。
+- **根因**：`cgn_to_gripper` step 4 把「palm→指尖接触面」的 +z 偏移误写为
+  −0.1034（后撤到 palm 后方），与正确值差 2×0.1034≈+0.207m —— 即 +20cm 特征。
+  残余 x 3–5cm 亦为同一错误沿倾斜逼近轴的投影，随 z 修复一并消失。
+- **修复**：两层常量分离 `GRIPPER_DEPTH_PANDA`(0.1034) / `TCP_DEPTH_PIPER`(0)，
+  step 4 平移量 = 二者之差；`filter_grasps_by_width`（开度 > 0.045 丢弃并记
+  `dropped_by_width` 日志）；openings 贯通 服务端→wrapper→`vision_client`
+  （`return_openings=True`，旧二元组调用向后兼容）。
+- **验收门**（StackClutter 场景 12 连跑，4 次出候选）：top-1 距 GT 中心
+  0.75–4.67cm、距表面 0–1.46cm（门限 <2cm）、D3 0.935–0.997（门限 >0.9）、
+  零崩溃 —— **4/4 出候选运行全 PASS**。
+- **已知现象**：网络对 4cm 方块预测开度 0.0646–0.0725m，全部超 Piper 0.045m
+  上限 → 当前候选全被宽度过滤丢弃。抓取执行落地前需定策略
+  （开度钳制/接近后闭合等），已登记。
 
 ## 7. 文件清单
 

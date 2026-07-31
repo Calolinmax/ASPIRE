@@ -1,112 +1,43 @@
 #!/usr/bin/env python
-"""CGN 探针: Stack 场景加 4 个干扰物体（N2 资产）。
+"""CGN 探针: Stack 杂物场景（engine 原生 clutter=4）端到端验证。
 
 背景: CGN 训练分布 = 多物杂乱场景 + RealSense 噪声。干净单方块 sim 是双重 OOD，
 方块面 contact score 被压在阈值下（0.16-0.24 vs first_thres 0.23）→ 0 候选。
-加杂物后方块面分数升至 ~0.265，端到端可出候选（姿态相关，约 2/5）。
+加杂物后方块面分数升至 ~0.265，端到端 ~1/3 出候选（姿态相关）。
 
 用法:
-    MUJOCO_GL=egl python scripts/cgn_probe_clutter.py
+    MUJOCO_GL=egl python scripts/cgn_probe_clutter.py [--seed 0] [--clutter 4]
 输出:
-    服务端候选数 + top5 的 D2/D3（基座系, 对照 GT 方块）+ /tmp/cgn_scene_clutter.npz
+    服务端候选数 + 宽度过滤前后 top-1 的距GT中心/距表面/D3 + /tmp/cgn_scene_clutter.npz
 """
+import argparse
 import os
 import sys
+
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import aspire.robots  # noqa: F401 注册 Piper
-import aspire.engine_capx as E
 from aspire.engine_capx import ExecutionEngineCapx
-from aspire.primitives_capx import PrimitiveContextCapx, cgn_to_gripper
+from aspire.primitives_capx import (
+    PrimitiveContextCapx,
+    cgn_to_gripper,
+    filter_grasps_by_width,
+)
 from aspire.vision_client import segment_sam3_text_prompt, grasp_cgn
-
-from robosuite.environments.manipulation.stack import Stack
-from robosuite.models.objects import BoxObject, CylinderObject, BallObject
-from robosuite.models.arenas import TableArena
-from robosuite.models.tasks import ManipulationTask
-from robosuite.utils.placement_samplers import UniformRandomSampler
-from robosuite.utils.mjcf_utils import CustomMaterial
-
-
-class StackClutter(Stack):
-    """Stack + 4 个干扰物体（蓝盒/灰盒/黄柱/紫球），不与目标重叠（sampler 保证）。"""
-
-    def _load_model(self):
-        super(Stack, self)._load_model()  # MujocoEnv 级加载（跳过 Stack 版）
-
-        xpos = self.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
-        self.robots[0].robot_model.set_base_xpos(xpos)
-
-        mujoco_arena = TableArena(
-            table_full_size=self.table_full_size,
-            table_friction=self.table_friction,
-            table_offset=self.table_offset,
-        )
-        mujoco_arena.set_origin([0, 0, 0])
-
-        tex_attrib = {"type": "cube"}
-        mat_attrib = {"texrepeat": "1 1", "specular": "0.4", "shininess": "0.1"}
-        redwood = CustomMaterial(texture="WoodRed", tex_name="redwood",
-                                 mat_name="redwood_mat", tex_attrib=tex_attrib, mat_attrib=mat_attrib)
-        greenwood = CustomMaterial(texture="WoodGreen", tex_name="greenwood",
-                                   mat_name="greenwood_mat", tex_attrib=tex_attrib, mat_attrib=mat_attrib)
-        self.cubeA = BoxObject(name="cubeA", size_min=[0.02, 0.02, 0.02], size_max=[0.02, 0.02, 0.02],
-                               rgba=[1, 0, 0, 1], material=redwood)
-        self.cubeB = BoxObject(name="cubeB", size_min=[0.025, 0.025, 0.025], size_max=[0.025, 0.025, 0.025],
-                               rgba=[0, 1, 0, 1], material=greenwood)
-        self.distractors = [
-            BoxObject(name="dist_box1", size_min=[0.02, 0.02, 0.03], size_max=[0.02, 0.02, 0.03],
-                      rgba=[0.1, 0.25, 0.8, 1]),
-            BoxObject(name="dist_box2", size_min=[0.015, 0.03, 0.02], size_max=[0.015, 0.03, 0.02],
-                      rgba=[0.5, 0.5, 0.5, 1]),
-            CylinderObject(name="dist_cyl", size=[0.018, 0.035], rgba=[0.9, 0.8, 0.1, 1]),
-            BallObject(name="dist_ball", size=[0.022], rgba=[0.5, 0.1, 0.6, 1]),
-        ]
-        objects = [self.cubeA, self.cubeB] + self.distractors
-
-        self.placement_initializer = UniformRandomSampler(
-            name="ObjectSampler",
-            mujoco_objects=objects,
-            x_range=[-0.08, 0.08],
-            y_range=[-0.08, 0.08],
-            rotation=None,
-            ensure_object_boundary_in_range=False,
-            ensure_valid_placement=True,
-            reference_pos=self.table_offset,
-            z_offset=0.01,
-            rng=self.rng,
-        )
-        self.model = ManipulationTask(
-            mujoco_arena=mujoco_arena,
-            mujoco_robots=[robot.robot_model for robot in self.robots],
-            mujoco_objects=objects,
-        )
-
-
-class ClutterEngine(ExecutionEngineCapx):
-    def _make_env(self, kwargs):
-        env = StackClutter(**kwargs)
-        env.placement_initializer = UniformRandomSampler(
-            name="ObjectSampler",
-            mujoco_objects=[env.cubeA, env.cubeB] + env.distractors,
-            x_range=list(E.CUBE_X_RANGE),
-            y_range=list(E.CUBE_Y_RANGE),
-            rotation=None,
-            ensure_object_boundary_in_range=False,
-            ensure_valid_placement=True,
-            reference_pos=env.table_offset,
-            z_offset=0.01,
-            rng=env.rng,
-        )
-        return env
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--clutter', type=int, default=None,
+                        help='干扰物数量 (默认 None=Stack 时 4; 0=干净场景)')
+    args = parser.parse_args()
+
     import mujoco
 
-    engine = ClutterEngine(task="Stack", seed=0)
+    engine = ExecutionEngineCapx(task="Stack", seed=args.seed, clutter=args.clutter)
     ctx = PrimitiveContextCapx(engine)
     obs = ctx.get_observation()
     cam = obs["robot0_robotview"]
@@ -127,22 +58,47 @@ def main():
     d = depth[seg == 1]
     print('depth in seg: min %.4f max %.4f mean %.4f' % (d.min(), d.max(), d.mean()))
 
-    grasps, scores = grasp_cgn(depth, K, seg)
+    grasps, scores, openings = grasp_cgn(depth, K, seg, return_openings=True)
     print('service path: grasps', grasps.shape, 'scores',
           scores.round(4) if len(scores) else scores)
+    if len(openings):
+        print('openings:', openings.round(4))
 
     model_ = engine.env.sim.model._model
     cid = mujoco.mj_name2id(model_, mujoco.mjtObj.mjOBJ_BODY, "cubeA_main")
     gt_world = engine.env.sim.data.xpos[cid].copy()
     gt_base = (engine.T_base_world @ np.append(gt_world, 1.0))[:3]
-    print('GT cube (base):', gt_base.round(4))
+    cube_half = 0.02  # cubeA size_min/max = 0.02 (半边长)
+    print('GT cube (base):', gt_base.round(4), ' 半边长: %.3f m' % cube_half)
 
-    if len(grasps):
-        grasps_final = np.array([cgn_to_gripper(g, pose_mat) for g in grasps])
+    def report_top(grasps_, scores_, tag):
+        if not len(grasps_):
+            print(f'{tag}: N/A (0 candidates)')
+            return
+        grasps_final = np.array([cgn_to_gripper(g, pose_mat) for g in grasps_])
         for i, g in enumerate(grasps_final[:5]):
-            d2i = np.linalg.norm(g[:3, 3] - gt_base)
-            print(f'G{i}: pos(base)={g[:3, 3].round(4)}  D2={d2i * 100:.2f} cm  '
-                  f'D3={-g[2, 2]:.3f}  score={scores[i]:.4f}')
+            p = g[:3, 3]
+            d_center = np.linalg.norm(p - gt_base)
+            q = np.abs(p - gt_base) - cube_half
+            d_surf = float(np.linalg.norm(np.maximum(q, 0.0)))
+            print(f'{tag} G{i}: pos(base)={p.round(4)}  距GT中心={d_center * 100:.2f} cm  '
+                  f'距表面={d_surf * 100:.2f} cm  D3={-g[2, 2]:.3f}  score={scores_[i]:.4f}')
+        top = grasps_final[0]
+        p = top[:3, 3]
+        d_center = np.linalg.norm(p - gt_base)
+        q = np.abs(p - gt_base) - cube_half
+        d_surf = float(np.linalg.norm(np.maximum(q, 0.0)))
+        d3 = -top[2, 2]
+        ok = (d_surf < 0.02) and (d3 > 0.9)
+        print('%s TOP-1: 距GT中心 %.2f cm, 距表面 %.2f cm (门限<2cm), D3 %.3f (门限>0.9) => %s'
+              % (tag, d_center * 100, d_surf * 100, d3, 'PASS' if ok else 'FAIL'))
+
+    # 变换链验收：在【宽度过滤前】的 top-1 上测量（过滤与变换无关）
+    report_top(grasps, scores, '[pre-filter]')
+    # 执行管线视角：宽度过滤后
+    grasps_f, scores_f, openings_f = filter_grasps_by_width(grasps, scores, openings)
+    print('after width filter: grasps', grasps_f.shape)
+    report_top(grasps_f, scores_f, '[post-filter]')
 
     np.savez('/tmp/cgn_scene_clutter.npz',
              depth=np.asarray(depth, dtype=np.float32),
