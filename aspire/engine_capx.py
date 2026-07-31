@@ -100,6 +100,69 @@ GRIPPER_TRAVEL = 0.035      # joint7 全行程（0=闭合, 0.035=张开）
 CUBE_X_RANGE = [-0.02, 0.10]
 CUBE_Y_RANGE = [-0.12, 0.12]
 
+# P3: 视线走廊约束的包围球半径表（半对角线, 与 StackClutter 尺寸定义一致）
+_CORRIDOR_RADII = {
+    "cubeB": float(np.sqrt(3) * 0.025),
+    "dist_box1": float(np.linalg.norm([0.02, 0.02, 0.03])),
+    "dist_box2": float(np.linalg.norm([0.015, 0.03, 0.02])),
+    "dist_cyl": float(np.linalg.norm([0.018, 0.035])),
+    "dist_ball": 0.022,
+}
+
+# robotview 相机世界坐标（robosuite 编译模型 sim.data.cam_xpos 实测值,
+# 与 robot.xml pos="0.68 0 0.46" + 桌柱安装链一致）。 CorridorFreeSampler
+# 需要世界系光心; _load_model 阶段模型未编译无法自取, 故为常量——
+# 安装/相机改动时必须同步更新（engine 初始化有漂移自检, 见 _post_reset）。
+ROBOTVIEW_CAM_WORLD = np.array([0.38, 0.0, 1.26])
+
+
+class CorridorFreeSampler(UniformRandomSampler):
+    """UniformRandomSampler + 视线走廊约束（P3, 2026-07-31）。
+
+    任何非目标物体不得进入「相机→cubeA」视线走廊: 物体包围球中心到
+    射线（相机光心→cubeA 中心, 取线段内）的横向距离须 > 半径+1cm。
+    rejection sampling 整体重采（rng 消费序列确定 ⇒ seed 复现性保持）。
+    """
+
+    def __init__(self, *args, cam_pos=None, corridor_target="cubeA",
+                 corridor_radii=None, corridor_margin=0.01, max_attempts=50, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._cam_pos = None if cam_pos is None else np.asarray(cam_pos, dtype=np.float64)
+        self._target = corridor_target
+        self._radii = corridor_radii or {}
+        self._margin = corridor_margin
+        self._max_attempts = max_attempts
+
+    def _corridor_ok(self, placement: dict) -> bool:
+        if self._cam_pos is None or self._target not in placement:
+            return True
+        tgt = np.asarray(placement[self._target][0], dtype=np.float64)
+        v = tgt - self._cam_pos
+        vv = float(np.dot(v, v))
+        if vv <= 0:
+            return True
+        for name, (pos, quat, obj) in placement.items():
+            if name == self._target:
+                continue
+            r = self._radii.get(name)
+            if r is None:
+                continue
+            w = np.asarray(pos, dtype=np.float64) - self._cam_pos
+            t = float(np.dot(w, v) / vv)
+            if 0.0 < t < 1.0 and float(np.linalg.norm(w - t * v)) < r + self._margin:
+                return False
+        return True
+
+    def sample(self, fixtures=None, reference=None, on_top=True):
+        placement = super().sample(fixtures, reference, on_top)
+        for _ in range(self._max_attempts - 1):
+            if self._corridor_ok(placement):
+                return placement
+            placement = super().sample(fixtures, reference, on_top)
+        if not self._corridor_ok(placement):
+            print("[CorridorFreeSampler] 50 次未满足走廊约束, 放行末次采样")
+        return placement
+
 
 class StackClutter(suite.environments.manipulation.stack.Stack):
     """Stack + 4 个干扰物体（蓝盒/灰盒/黄柱/紫球）。
@@ -143,17 +206,23 @@ class StackClutter(suite.environments.manipulation.stack.Stack):
         ]
         objects = [self.cubeA, self.cubeB] + self.distractors
 
-        self.placement_initializer = UniformRandomSampler(
+        # 采样器必须在这里建（P3 调试结论）: robosuite hard_reset 每次 reset()
+        # 都重跑 _load_model, 外部事后替换的 sampler 会被冲掉——
+        # engine._make_env 的替换对本类是死代码（CUBE 范围也曾因此失效）。
+        # CorridorFreeSampler = CUBE 范围 + 视线走廊约束一体化, 重建也安全。
+        self.placement_initializer = CorridorFreeSampler(
             name="ObjectSampler",
             mujoco_objects=objects,
-            x_range=[-0.08, 0.08],
-            y_range=[-0.08, 0.08],
+            x_range=list(CUBE_X_RANGE),
+            y_range=list(CUBE_Y_RANGE),
             rotation=None,
             ensure_object_boundary_in_range=False,
             ensure_valid_placement=True,
             reference_pos=self.table_offset,
             z_offset=0.01,
             rng=self.rng,
+            cam_pos=ROBOTVIEW_CAM_WORLD,
+            corridor_radii=_CORRIDOR_RADII,
         )
         self.model = ManipulationTask(
             mujoco_arena=mujoco_arena,
@@ -241,14 +310,15 @@ class ExecutionEngineCapx(ExecutionEngine):
         # (max(请求, 预置)), 之后任何 ≤1280×960 的渲染不再重建。
         env.sim.model._model.vis.global_.offwidth = 1280
         env.sim.model._model.vis.global_.offheight = 960
-        # cap-x 同款做法: 建 env 后替换放置采样器（范围按 Piper 臂展适配）
-        if hasattr(env, "cubeA"):
-            mujoco_objects = [env.cubeA, env.cubeB]
-            if hasattr(env, "distractors"):
-                mujoco_objects = mujoco_objects + env.distractors
+        # cap-x 同款做法: 建 env 后替换放置采样器（范围按 Piper 臂展适配）。
+        # 注意: 仅 plain Stack 走这里——robosuite Stack._load_model 有
+        # "已存在则 reset+add_objects"分支, 替换在 hard_reset 下幸存;
+        # StackClutter 的采样器（含走廊约束）在其 _load_model 内一体化构建,
+        # 此处跳过（外部替换会被 hard_reset 冲掉, P3 实测）。
+        if hasattr(env, "cubeA") and not hasattr(env, "distractors"):
             env.placement_initializer = UniformRandomSampler(
                 name="ObjectSampler",
-                mujoco_objects=mujoco_objects,
+                mujoco_objects=[env.cubeA, env.cubeB],
                 x_range=list(CUBE_X_RANGE),
                 y_range=list(CUBE_Y_RANGE),
                 rotation=None,
@@ -263,6 +333,13 @@ class ExecutionEngineCapx(ExecutionEngine):
     def _post_reset(self):
         """缓存执行器索引/基座变换，写入初始 ctrl 并稳定仿真。"""
         model = self.env.sim.model._model
+        # ROBOTVIEW_CAM_WORLD 漂移自检（P3: 常量取自编译模型, 安装改动须同步）
+        cam_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "robot0_robotview")
+        if cam_id >= 0:
+            drift = np.linalg.norm(self.env.sim.data.cam_xpos[cam_id] - ROBOTVIEW_CAM_WORLD)
+            if drift > 0.01:
+                print(f"[engine_capx] WARNING: robotview cam_xpos 漂移 {drift * 100:.1f}cm, "
+                      f"ROBOTVIEW_CAM_WORLD 需更新（走廊约束基准失准）")
         self._arm_act_ids = np.array(
             [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, a) for a in ARM_ACTUATORS]
         )
