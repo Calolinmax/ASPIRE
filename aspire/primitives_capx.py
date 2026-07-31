@@ -35,13 +35,16 @@ from robosuite.utils import transform_utils as T
 
 from .vision_client import segment_sam3_text_prompt as _sam3_text_raw
 from .vision_client import segment_sam3_point_prompt as _sam3_point_raw
+from .vision_client import grasp_cgn as _grasp_cgn_raw
 from .annotate import build_annotation
 
 # ---------------------------------------------------------------------------
 # 常量
 # ---------------------------------------------------------------------------
 ROBOTVIEW = "robot0_robotview"
-RENDER_H = RENDER_W = 256   # 512 下 EGL wedge 率显著更高 (实测); 256 与 Panda 同档稳定
+RENDER_H = RENDER_W = 640   # 2026-07-31 起 640（方块 15-20px→~38px, cube_max 0.41→0.82 实测）
+                            # 历史: 512 下 EGL wedge 率显著更高(engine.py:195 旧病);
+                            # 640 经 10-seed 门验证后方可转正的档位, 缓冲区由 engine 预置 1280×960
 
 EEF_SITE = "gripper0_right_grip_site"
 ARM_JOINT_NAMES = [f"robot0_joint{i}" for i in range(1, 7)]
@@ -444,6 +447,14 @@ class PrimitiveContextCapx:
             同 segment_sam3_text_prompt 的 list 结构；未命中返回 []
         """
         return self._to_capx_results(_sam3_point_raw(np.asarray(rgb), point_coords))
+
+    def grasp_cgn(self, rgb, depth, K, seg, z_range=(0.2, 2.0)):
+        """CGN 抓取检测（trace 包装版）。
+
+        rgb 仅用于标注图投影底图，推理只看 depth/K/seg。
+        Returns: (grasps (N,4,4) 相机系, scores (N,), openings (N,))
+        """
+        return _grasp_cgn_raw(depth, K, seg, z_range=z_range, return_openings=True)
 
     def point_prompt_molmo(self, image: np.ndarray, text_prompt: str) -> dict:
         """文本→关键点定位（SAM3 级联实现，接口与 cap-x 的 Molmo 一致）。
@@ -862,6 +873,7 @@ def build_namespace(engine) -> dict:
         "segment_sam3_text_prompt": ctx.segment_sam3_text_prompt,
         "segment_sam3_point_prompt": ctx.segment_sam3_point_prompt,
         "point_prompt_molmo": ctx.point_prompt_molmo,
+        "grasp_cgn": ctx.grasp_cgn,
         "plan_grasp": ctx.plan_grasp,
         "get_oriented_bounding_box_from_3d_points": ctx.get_oriented_bounding_box_from_3d_points,
         "solve_ik": ctx.solve_ik,

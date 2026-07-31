@@ -36,7 +36,7 @@ from aspire.primitives_capx import (
     filter_grasps_by_width,
     PIPER_MAX_WIDTH,
 )
-from aspire.vision_client import segment_sam3_text_prompt, grasp_cgn
+from aspire.vision_client import segment_sam3_text_prompt
 from robosuite.utils import transform_utils as T
 
 # 夹爪开合线性模型（sim 实测: q7=0 → 内净距 0.0172m; q7=0.035 → 0.0449m）
@@ -98,7 +98,7 @@ def main():
             print('WARNING: SAM3 no mask')
         print('mask pixels:', int((seg > 0).sum()))
 
-        grasps, scores, openings = grasp_cgn(depth, K, seg, return_openings=True)
+        grasps, scores, openings = ns['grasp_cgn'](rgb, depth, K, seg)
         print('CGN candidates:', len(grasps),
               'scores:', scores.round(3) if len(scores) else scores)
 
@@ -115,23 +115,44 @@ def main():
         gt_base = (engine.T_base_world @ np.append(engine.env.sim.data.xpos[cid], 1.0))[:3]
         print('GT cube (base):', gt_base.round(4))
 
+        # yaw 变体（2026-07-31 批准）：绕抓取点处逼近轴 {0,90,180,270}° 四个旋转位姿。
+        # 依据: cubeA 水平截面为正方形(axis-aligned) ⇒ 90° 旋转后闭合轴仍跨 4cm 对面,
+        # contact_dist 不变。【仅对方形截面目标启用】位置不动只转姿态。
+        YAW_STEPS_DEG = [0, 90, 180, 270]
+        n_pre_ok = 0  # pre-grasp IK（任一 yaw）成功的候选数
         for ci in range(min(args.max_candidates, len(grasps_f))):
-            g_final = cgn_to_gripper(grasps_f[ci], pose_mat)
-            approach = g_final[:3, 2]   # grip_site z = 逼近方向（指向物体）
-            quat_wxyz = quat_wxyz_from_mat(g_final[:3, :3])
-            pos_grasp = g_final[:3, 3].copy()
-            pos_pre = pos_grasp - approach * 0.10
+            g_base_pose = cgn_to_gripper(grasps_f[ci], pose_mat)
             print(f'\n=== 候选 {ci} (score={scores_f[ci]:.3f}, cgn_open={openings_f[ci]:.4f}) ===')
+            solved = None
+            for yaw_deg in YAW_STEPS_DEG:
+                c_, s_ = np.cos(np.deg2rad(yaw_deg)), np.sin(np.deg2rad(yaw_deg))
+                T_yaw = np.eye(4)
+                T_yaw[:3, :3] = np.array([[c_, -s_, 0], [s_, c_, 0], [0, 0, 1]])
+                g_try = g_base_pose @ T_yaw  # 局部 z=逼近轴, 右乘=绕抓取点原地转
+                quat_wxyz = quat_wxyz_from_mat(g_try[:3, :3])
+                pos_grasp = g_try[:3, 3].copy()
+                pos_pre = pos_grasp - g_try[:3, 2] * 0.10
+                try:
+                    q_pre = ns['solve_ik'](pos_pre, quat_wxyz)
+                    solved = (yaw_deg, quat_wxyz, pos_grasp, pos_pre, q_pre)
+                    print(f'  yaw={yaw_deg}: pre-grasp IK 收敛')
+                    break
+                except RuntimeError:
+                    print(f'  yaw={yaw_deg}: pre-grasp IK 未收敛')
+                    continue
+            if solved is None:
+                print(f'候选 {ci} 失败: 4 个 yaw 的 pre-grasp IK 均未收敛')
+                continue
+            n_pre_ok += 1
+            yaw_deg, quat_wxyz, pos_grasp, pos_pre, q_pre = solved
             print('grasp pos (base):', pos_grasp.round(4), ' pre:', pos_pre.round(4))
             try:
                 # 接近开度 = min(cgn_width, PIPER_MAX) → 本场景恒满开
                 open_frac = fraction_for_inner(min(float(openings_f[ci]), PIPER_MAX_WIDTH))
                 engine.set_gripper(open_frac)
-                # 预抓取
-                q_pre = ns['solve_ik'](pos_pre, quat_wxyz)
                 ns['move_to_joints'](q_pre)
                 print('预抓取到位')
-                # 下降
+                # 下降（与 pre-grasp 同一 yaw）
                 q_grasp = ns['solve_ik'](pos_grasp, quat_wxyz)
                 ns['move_to_joints'](q_grasp)
                 print('下降到位, site z(base):',
@@ -156,19 +177,22 @@ def main():
                       + ('夹持成功' if held else '方块滑落'))
                 if held:
                     success = True
-                    print(f'\nSUCCESS: 候选 {ci} 抓取成功')
+                    print(f'\nSUCCESS: 候选 {ci} yaw={yaw_deg} 抓取成功')
                     break
                 # 失败复位: 松开+撤回
                 engine.set_gripper(1.0)
                 ns['move_to_joints'](q_pre)
             except RuntimeError as e:
-                print(f'候选 {ci} 失败: {type(e).__name__}: {e}')
+                print(f'候选 {ci} yaw={yaw_deg} 失败: {type(e).__name__}: {e}')
                 try:
                     engine.set_gripper(1.0)
                     engine.hold_ticks(10)
                 except Exception:
                     pass
                 continue
+        n_tried = min(args.max_candidates, len(grasps_f))
+        if n_tried:
+            print(f'\npre-grasp IK（任一 yaw）成功率: {n_pre_ok}/{n_tried}')
 
         print('\n' + '=' * 56)
         print('RESULT:', 'PASS' if success else 'FAIL')
