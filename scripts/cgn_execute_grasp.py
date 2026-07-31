@@ -90,7 +90,7 @@ def main():
         rgb, depth, K, pose_mat = (cam["images"]["rgb"], cam["images"]["depth"],
                                    cam["intrinsics"], cam["pose_mat"])
 
-        masks = segment_sam3_text_prompt(rgb, "red cube")
+        masks = ns['segment_sam3_text_prompt'](rgb, "red cube")
         seg = np.zeros(rgb.shape[:2], dtype=np.int32)
         if masks:
             seg[masks[0]["mask"] > 0] = 1
