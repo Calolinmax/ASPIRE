@@ -1,0 +1,70 @@
+<mujoco model="piper_gripper">
+  <!-- AgileX Piper 平行夹爪 (robosuite GripperModel 适配版)
+       来源: external/agilex_arm_mujoco piper.xml 的 link7/link8
+       结构:
+         piper_hand (root, 挂载到 robot0_link6, 偏移 z=0.13503 与原 MJCF 一致)
+         ├── eef        : TCP 参考系 (指尖中点, 与 Panda grip_site 语义一致:
+         │                z 轴 = 逼近方向(腕部→指尖), y 轴 = 手指开合轴)
+         ├── link7      : 手指1 (slide joint7, 0=闭合 0.035=张开, equality 镜像 link8)
+         └── link8      : 手指2 (slide joint8, 由 equality 驱动)
+       指尖几何 (原模型实测): 合拢时两指垫接触面位于 root 系 z=-0.045 平面,
+       手指沿 ±y 开合, 全开张嘴内净距约 45mm -->
+  <compiler angle="radian"/>
+
+  <asset>
+    <material name="gray_mat" rgba="0.59 0.59 0.59 1"/>
+    <mesh name="link7" file="link7.stl"/>
+    <mesh name="link8" file="link8.stl"/>
+  </asset>
+
+  <worldbody>
+    <body name="piper_hand" pos="0 0 0.13503" quat="1 0 0 0" gravcomp="1">
+      <inertial pos="0 0 -0.02" mass="0.05" diaginertia="1e-5 1e-5 1e-5"/>
+
+      <!-- TCP 参考 (Panda grip_site 同构): 指尖垫接触面中点。
+           姿态 quat="0 0 1 0" (绕 y 180°): 手指从 piper_hand 向 root -z 方向伸展,
+           翻转后 site z = 腕部→指尖的逼近方向(朝下时为竖直向下), y = 手指开合轴。
+           注意: 若去掉此翻转, "top-down" 指令会让手指朝上、掌心撞桌 (实测)。 -->
+      <body name="eef" pos="0 0 -0.045" quat="0 0 1 0">
+        <site name="grip_site" pos="0 0 0" size="0.01 0.01 0.01" rgba="1 0 0 0.5" type="sphere" group="1"/>
+        <site name="ee_x" pos="0.05 0 0" size="0.004 .05" quat="0.707105 0 0.707108 0" rgba="1 0 0 0" type="cylinder" group="1"/>
+        <site name="ee_y" pos="0 0.05 0" size="0.004 .05" quat="0.707105 0.707108 0 0" rgba="0 1 0 0" type="cylinder" group="1"/>
+        <site name="ee_z" pos="0 0 0.05" size="0.004 .05" quat="1 0 0 0" rgba="0 0 1 0" type="cylinder" group="1"/>
+        <site name="grip_site_cylinder" pos="0 0 0" size="0.005 10" rgba="0 1 0 0.3" type="cylinder" group="1"/>
+        <!-- 腕部相机已移到 robot.xml 的 link6 body 上，从 link6 向指尖外看 -->
+      </body>
+
+      <body name="link7" pos="0 0 0" quat="1.89468e-08 1.89469e-08 0.707108 0.707105" gravcomp="1">
+        <inertial pos="-0.000277778 -0.0467673 -0.00921029" quat="0.46134 0.536174 -0.553273 0.439968"
+          mass="0.0264823" diaginertia="0.001 0.001 0.001"/>
+        <joint name="joint7" axis="0 0 -1" type="slide" range="0 0.035" frictionloss="0"/>
+        <geom type="mesh" mesh="link7" material="gray_mat" contype="0" conaffinity="0" group="1" density="0"/>
+        <!-- 指垫碰撞盒 (原模型参数; 加大摩擦以稳定夹持方块) -->
+        <geom name="finger1_collision" type="box" size=".012 .015 .0025" pos="0 -0.015 -0.0025"
+          condim="4" friction="2 0.05 0.0001" solref="0.01 0.5" rgba="0.8 0.2 0.2 1" group="0"/>
+        <geom name="finger1_pad_collision" type="box" size=".015 .015 .0025" pos="0 -0.045 -0.0025"
+          condim="4" friction="2 0.05 0.0001" solref="0.01 0.5" rgba="0.8 0.2 0.2 1" group="0"/>
+      </body>
+
+      <body name="link8" pos="0 0 0" quat="1.89468e-08 -1.89469e-08 -0.707108 0.707105" gravcomp="1">
+        <inertial pos="0.000277817 0.0467674 -0.0092103" quat="0.553273 0.439968 -0.46134 0.536174"
+          mass="0.0264822" diaginertia="0.001 0.001 0.001"/>
+        <joint name="joint8" axis="0 0 1" type="slide" range="-0.035 0" frictionloss="0"/>
+        <geom type="mesh" mesh="link8" material="gray_mat" contype="0" conaffinity="0" group="1" density="0"/>
+        <geom name="finger2_collision" type="box" size=".012 .015 .0025" pos="0 0.015 -0.0025"
+          condim="4" friction="2 0.05 0.0001" solref="0.01 0.5" rgba="0.2 0.2 0.8 1" group="0"/>
+        <geom name="finger2_pad_collision" type="box" size=".015 .015 .0025" pos="0 0.045 -0.0025"
+          condim="4" friction="2 0.05 0.0001" solref="0.01 0.5" rgba="0.2 0.2 0.8 1" group="0"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position name="gripper" joint="joint7" kp="40" kv="5" forcerange="-10 10"
+      ctrllimited="true" ctrlrange="0 0.035"/>
+  </actuator>
+
+  <equality>
+    <joint joint1="joint8" joint2="joint7" polycoef="0 -1 0 0 0"/>
+  </equality>
+</mujoco>

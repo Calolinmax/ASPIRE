@@ -34,10 +34,23 @@ from aspire.primitives_capx import (
     build_namespace,
     cgn_to_gripper,
     filter_grasps_by_width,
+    _ik_library,
     PIPER_MAX_WIDTH,
 )
 from aspire.vision_client import segment_sam3_text_prompt
 from robosuite.utils import transform_utils as T
+
+
+def lib_feasible(pos_base, z_app, dp_max=0.06, da_max=0.35):
+    """ik_library 可达性预筛（2026-08-03）: 库内是否存在
+    位置差 <dp_max 且逼近向夹角 <da_max(rad) 的条目。"""
+    lib = _ik_library()
+    if lib is False:
+        return True, (float('nan'), float('nan'))  # 无库不拦
+    dp = np.linalg.norm(lib['P'] - np.asarray(pos_base, dtype=float), axis=1)
+    da = np.arccos(np.clip(lib['Z'] @ np.asarray(z_app, dtype=float), -1.0, 1.0))
+    ok = bool(((dp < dp_max) & (da < da_max)).any())
+    return ok, (float(dp.min()), float(da.min()))
 
 # 夹爪开合线性模型（sim 实测: q7=0 → 内净距 0.0172m; q7=0.035 → 0.0449m）
 _GRIP_INNER_0 = 0.0172
@@ -132,6 +145,11 @@ def main():
                 quat_wxyz = quat_wxyz_from_mat(g_try[:3, :3])
                 pos_grasp = g_try[:3, 3].copy()
                 pos_pre = pos_grasp - g_try[:3, 2] * 0.10
+                # 可达性预筛（第2步）: 库邻域无可达条目则跳过本次 IK
+                ok, (mdp, mda) = lib_feasible(pos_grasp, g_try[:3, 2])
+                if not ok:
+                    print(f'  yaw={yaw_deg}: prefilter_unreachable (lib dp={mdp:.3f} da={mda:.2f})')
+                    continue
                 try:
                     q_pre = ns['solve_ik'](pos_pre, quat_wxyz)
                     solved = (yaw_deg, quat_wxyz, pos_grasp, pos_pre, q_pre)
@@ -193,6 +211,58 @@ def main():
         n_tried = min(args.max_candidates, len(grasps_f))
         if n_tried:
             print(f'\npre-grasp IK（任一 yaw）成功率: {n_pre_ok}/{n_tried}')
+
+        # 安全网（2026-08-03 批准, 官方 cube_reset pick_object 蓝本）:
+        # CGN 候选全灭时启用几何规划器（重力吸附竖直逼近 + 8-yaw 采样,
+        # 姿态天生落在臂可达流形内）。日志记 fallback_used=true, 不静默替换主线。
+        if not success:
+            print('\n=== FALLBACK: plan_grasp 几何安全网 (fallback_used=true) ===')
+            ctx_fb = PrimitiveContextCapx(engine)
+            fb_grasps, fb_scores = ctx_fb._plan_grasp_geometric(depth, K, seg)
+            print('geometric candidates:', len(fb_grasps),
+                  'scores:', fb_scores.round(3) if len(fb_scores) else fb_scores)
+            for fi in range(min(3, len(fb_grasps))):
+                g_fb = fb_grasps[fi]
+                approach = g_fb[:3, 2]
+                quat_wxyz = quat_wxyz_from_mat(g_fb[:3, :3])
+                pos_grasp = g_fb[:3, 3].copy()
+                pos_pre = pos_grasp - approach * 0.10
+                print(f'\n--- fallback 候选 {fi} (score={fb_scores[fi]:.3f}) ---')
+                print('grasp pos (base):', pos_grasp.round(4))
+                try:
+                    engine.set_gripper(1.0)
+                    q_pre = ns['solve_ik'](pos_pre, quat_wxyz)
+                    ns['move_to_joints'](q_pre)
+                    print('预抓取到位')
+                    q_grasp = ns['solve_ik'](pos_grasp, quat_wxyz)
+                    ns['move_to_joints'](q_grasp)
+                    print('下降到位')
+                    engine.set_gripper(fraction_for_inner(CONTACT_DIST - 0.002))
+                    engine.hold_ticks(15)
+                    print('已闭合')
+                    pos_lift = pos_grasp + np.array([0, 0, 0.05])
+                    q_lift = ns['solve_ik'](pos_lift, quat_wxyz)
+                    ns['move_to_joints'](q_lift)
+                    print('抬升到位')
+                    engine.hold_ticks(40)
+                    z_end = cube_z_base(engine)
+                    held = z_end > gt_base[2] + 0.03
+                    print(f'悬停结束 cube z(base)={z_end:.4f} (GT {gt_base[2]:.4f}) → '
+                          + ('夹持成功' if held else '方块滑落'))
+                    if held:
+                        success = True
+                        print(f'\nSUCCESS: fallback 候选 {fi} 抓取成功 (fallback_used=true)')
+                        break
+                    engine.set_gripper(1.0)
+                    ns['move_to_joints'](q_pre)
+                except RuntimeError as e:
+                    print(f'fallback 候选 {fi} 失败: {type(e).__name__}: {e}')
+                    try:
+                        engine.set_gripper(1.0)
+                        engine.hold_ticks(10)
+                    except Exception:
+                        pass
+                    continue
 
         print('\n' + '=' * 56)
         print('RESULT:', 'PASS' if success else 'FAIL')

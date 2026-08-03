@@ -558,6 +558,8 @@ class PrimitiveContextCapx:
 
         # 得分: 顶面平面拟合质量（薄片点云 → 小特征值占比低）
         planarity = float(np.clip(1.0 - eigvals[0] / max(eigvals.sum(), 1e-12), 0.0, 1.0))
+        # cam(mujoco 约定)→基座系（与 get_observation 的 E_api 同构）
+        E_api = self.engine.T_base_world @ E_muj
         grasps, scores = [], []
         for k in range(GRASP_N_YAW):
             yaw = 2 * np.pi * k / GRASP_N_YAW
@@ -565,8 +567,8 @@ class PrimitiveContextCapx:
             xaxis = np.cross(yaxis, zaxis)
             R = np.column_stack([xaxis, yaxis, zaxis])
             Tg = np.eye(4)
-            Tg[:3, :3] = R
-            Tg[:3, 3] = tcp
+            Tg[:3, :3] = E_api[:3, :3] @ R
+            Tg[:3, 3] = (E_api @ np.append(tcp, 1.0))[:3]
             grasps.append(Tg)
             scores.append(planarity * (1.0 - 0.05 * k))
         order = np.argsort(scores)[::-1]

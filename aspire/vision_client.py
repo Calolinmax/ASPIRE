@@ -58,14 +58,14 @@ def segment_sam3_point_prompt(rgb, point) -> list[dict]:
 # CGN 服务客户端（端口 8117）
 # ---------------------------------------------------------------------------
 
-def grasp_cgn(depth, K, seg, z_range=(0.2, 2.0), forward_passes=1, return_openings=False):
+def grasp_cgn(depth, K, seg, z_range=(0.2, 1.8), forward_passes=1, return_openings=False):
     """调用 CGN 服务，返回 (grasps, scores)（或加 openings）。
 
     Args:
         depth: (H, W) 深度图，单位米
         K: (3, 3) 相机内参
         seg: (H, W) 分割图
-        z_range: 深度范围过滤
+        z_range: 深度范围过滤（默认 (0.2, 1.8)，与官方 inference.py 对齐）
         forward_passes: 前向传播次数（候选数）。【当前仅支持 1】——
             服务端计算图按 batch_size=1 构建，传 >1 会在服务端以
             "Cannot feed value of shape (N, 20000, 3)" 失败，故此处直接拦截。

@@ -1,0 +1,13 @@
+<mujoco model="piper_pedestal">
+  <!-- Piper 落地立柱台架: 25cm 高, 把臂基座抬到 z=0.25 (世界系)。
+       作用: 桌面(0.80m)相对臂基座 z=0.55 —— 该高度带内夹爪开口可压到
+       距竖直 20-26° (实测采样), 是 Piper 短臂+腕限位(±70°)下唯一
+       能稳定竖直抓桌面方块的安装方式 (臂在方块上方俯身抓下)。 -->
+  <worldbody>
+    <body name="base" pos="0 0 -0.25">
+      <inertial pos="0 0 -0.125" mass="5.0" diaginertia="0.01 0.01 0.001"/>
+      <geom name="pedestal_col" type="cylinder" pos="0 0 -0.125" size="0.055 0.125" rgba="0.25 0.25 0.25 1"/>
+      <geom name="pedestal_foot" type="cylinder" pos="0 0 -0.24" size="0.10 0.01" rgba="0.2 0.2 0.2 1"/>
+    </body>
+  </worldbody>
+</mujoco>
