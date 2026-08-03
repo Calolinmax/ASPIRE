@@ -14,40 +14,11 @@
 
 from __future__ import annotations
 
-import os
-
 import cv2
 import numpy as np
 
 _MASK_COLORS = [(40, 255, 40), (40, 200, 255), (255, 180, 40)]  # RGB，按返回顺序（≈score 降序）
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
-
-# Panda 夹爪点云（grasp_cgn 剪影标注用）: 局部系 palm 原点、+z 逼近,
-# 与 CGN 抓取位姿同约定（z max 0.126≈指尖, 已核）。子采样 ~500 点。
-_PANDA_PC = None
-_PANDA_PC_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "external", "contact_graspnet",
-    "gripper_models", "panda_pc.npy")
-
-
-def _panda_pc():
-    """加载并缓存 Panda 夹爪点云 (M,3)；失败返回 None（调用方回退不画）。
-
-    只取 z>=0.045 的双指段：全手点云含腕部/手臂体 (x±0.117)、掌心段
-    (z 0.02-0.06 板宽 ~8cm) 投影后糊成一团无法辨认（实测 3 轮）；
-    双指段才是"罩住"轮廓。子采样 ~300 点。
-    """
-    global _PANDA_PC
-    if _PANDA_PC is None:
-        try:
-            d = np.load(_PANDA_PC_PATH, allow_pickle=True).item()
-            pts = np.asarray(d["points"], dtype=np.float64)[:, :3]
-            pts = pts[pts[:, 2] >= 0.045]
-            idx = np.linspace(0, len(pts) - 1, min(300, len(pts))).astype(int)
-            _PANDA_PC = pts[idx]
-        except Exception:
-            _PANDA_PC = False
-    return _PANDA_PC if _PANDA_PC is not False else None
 
 
 def _tint(vis, mask, color, alpha=0.45):
@@ -133,52 +104,66 @@ def build_annotation(name, args, out):
             _text(vis, [f"plan_grasp: {len(scores)} cand, best={best:.2f}"])
             return vis
         if name == "grasp_cgn":
-            # RGB 底图 + top-3 候选 glyph（两指线+逼近线+闭合线+接触点），线旁标 score。
-            # 候选在 OpenCV 相机系，直接用 K 投影；0 候选也必须存图（域差/召回证据）。
+            # 官方线框风格（2026-07-31 P1 二次修订, 对齐 visualization_utils.draw_grasps）:
+            # 闭合方框(palm 横杠+双指线+指尖横杠) + 逼近管(O→O+Z·0.2 带箭头)。
+            # top-8, painter's algorithm(接触面 C 深度远→近); top1-3 2px, top4-8 1px;
+            # 十字+score 只标 top-1; REC 圈标最垂直候选。
             rgb, K = np.asarray(args[0]), np.asarray(args[2], float)
             vis = rgb.copy()
             grasps, scores, openings = out if out is not None else ([], [], [])
             if len(grasps) == 0:
                 _text(vis, ["CGN: 0 candidates"])
                 return vis
-            n_shown = 0
-            best_vert_i = -1
-            best_vert_v = -1.0
-            for i in range(min(3, len(grasps))):
+
+            def _px(p):
+                return (int(round(p[0])), int(round(p[1])))
+
+            n_top = min(8, len(grasps))
+            # painter's algorithm: 接触面 C 的相机系 z（深度）降序 = 远的先画
+            order = sorted(
+                range(n_top),
+                key=lambda i: -float(np.asarray(grasps[i])[2, 3]
+                                     + np.asarray(grasps[i])[:3, 2][2] * 0.1034))
+            best_vert_i, best_vert_v = -1, -1.0
+            for i in order:
                 g = np.asarray(grasps[i], float)
                 O, R = g[:3, 3], g[:3, :3]
-                C = O + R[:, 2] * 0.1034  # palm→指尖接触面（CGN 约定, GRIPPER_DEPTH_PANDA）
-                color = _MASK_COLORS[n_shown % len(_MASK_COLORS)]
-                # 垂直度代理（P2）: cam 系 |approach·(0,1,0)|, OpenCV y↓≈世界下
-                vert = float(abs(R[:, 2][1]))
+                X, Z = R[:, 0], R[:, 2]
+                w = float(openings[i]) if openings is not None and len(openings) > i else 0.05
+                C = O + Z * 0.1034  # palm→指尖接触面（CGN 约定, GRIPPER_DEPTH_PANDA）
+                color = _MASK_COLORS[i % len(_MASK_COLORS)]
+                thick = 2 if i < 3 else 1
+                segs = [
+                    (O - X * w / 2, O + X * w / 2),   # palm 横杠
+                    (O + X * w / 2, C + X * w / 2),   # 指线 +
+                    (C + X * w / 2, C - X * w / 2),   # 指尖横杠
+                    (C - X * w / 2, O - X * w / 2),   # 指线 −
+                ]
+                tube = (O, O + Z * 0.2)               # 逼近管 0.2m（官方同长）
+                proj = [(_project(K, a), _project(K, b)) for a, b in segs + [tube]]
+                if any(pa is None or pb is None for pa, pb in proj):
+                    continue
+                for pa, pb in proj[:4]:
+                    cv2.line(vis, _px(pa), _px(pb), color, thick, cv2.LINE_AA)
+                ta, tb = proj[4]
+                cv2.arrowedLine(vis, _px(ta), _px(tb), color, thick, cv2.LINE_AA, 0, 0.1)
+                if i == 0:
+                    pc_c = _project(K, C)
+                    if pc_c is not None:
+                        _cross(vis, pc_c[0], pc_c[1], color)
+                        cv2.putText(vis, f"{float(scores[i]):.2f}",
+                                    (int(round(pc_c[0])) + 3, int(round(pc_c[1])) - 3),
+                                    _FONT, 0.34, color, 1, cv2.LINE_AA)
+                vert = float(abs(R[:, 2][1]))  # 垂直度代理: cam 系 |approach·(0,1,0)|
                 if vert > best_vert_v:
                     best_vert_v, best_vert_i = vert, i
-                # 剪影画法（2026-07-31 P1, 取代线框 glyph）: Panda 双指点云
-                # 随候选位姿变换到相机系撒点（top1 半径 2 加重, top2/3 半径 1）——
-                # 真手轮廓罩在目标上, 不再手画线。
-                pc = _panda_pc()
-                if pc is not None:
-                    pts_cam = (R @ pc.T).T + O
-                    rad = 2 if n_shown == 0 else 1
-                    for p in pts_cam:
-                        pr = _project(K, p)
-                        if pr is not None:
-                            cv2.circle(vis, (int(round(pr[0])), int(round(pr[1]))),
-                                       rad, color, -1, cv2.LINE_AA)
-                pc_c = _project(K, C)
-                if pc_c is not None:
-                    _cross(vis, pc_c[0], pc_c[1], color)
-                    cv2.putText(vis, f"{float(scores[i]):.2f}",
-                                (int(round(pc_c[0])) + 3, int(round(pc_c[1])) - 3),
-                                _FONT, 0.34, color, 1, cv2.LINE_AA)
-                n_shown += 1
-            # P2: 标记最垂直候选（画圈+REC）——用户判读"有没有垂直抓"的锚点
+            # P2: REC 标记最垂直候选（圈+REC）
             if best_vert_i >= 0:
                 g = np.asarray(grasps[best_vert_i], float)
                 C = g[:3, 3] + g[:3, :3][:, 2] * 0.1034
                 pc_c = _project(K, C)
                 if pc_c is not None:
-                    ctr = (int(round(pc_c[0])), int(round(pc_c[1])))
+                    ctr = _px(pc_c)
                     cv2.circle(vis, ctr, 10, (255, 80, 255), 1, cv2.LINE_AA)
                     cv2.putText(vis, "REC", (ctr[0] + 12, ctr[1] + 4),
                                 _FONT, 0.4, (255, 80, 255), 1, cv2.LINE_AA)
