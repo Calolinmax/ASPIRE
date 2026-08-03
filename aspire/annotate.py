@@ -104,10 +104,15 @@ def build_annotation(name, args, out):
             _text(vis, [f"plan_grasp: {len(scores)} cand, best={best:.2f}"])
             return vis
         if name == "grasp_cgn":
-            # 官方线框风格（2026-07-31 P1 二次修订, 对齐 visualization_utils.draw_grasps）:
-            # 闭合方框(palm 横杠+双指线+指尖横杠) + 逼近管(O→O+Z·0.2 带箭头)。
-            # top-8, painter's algorithm(接触面 C 深度远→近); top1-3 2px, top4-8 1px;
-            # 十字+score 只标 top-1; REC 圈标最垂直候选。
+            # 定稿画法（2026-07-31 用户肉审定版 F2, 规格见 docs/cgn_container.md §10）:
+            #   开口 Π 三线段（palm 横杠+双指, 指尖不封口）, 统一绿 1px,
+            #   top-12 按接触面深度 painter 序（远先近后）。
+            #   宽度固定全开 0.08m（官方 draw_grasps 默认约定, 不随 openings 变）。
+            #   指尖端 = 真实接触面 C=O+Z·0.1034（物理, 不动）;
+            #   掌心端显示位 = C-Z·0.06（示意指长 6cm——物理 10.34cm 在小物体上
+            #   悬空太高, 纯显示压缩, 非物理长度）。
+            #   短刺 0.04m 从掌心沿 -Z（臂来方向, 约止于物理 palm O）。
+            #   封口矩形/点云剪影均已证伪, 禁止复活。
             rgb, K = np.asarray(args[0]), np.asarray(args[2], float)
             vis = rgb.copy()
             grasps, scores, openings = out if out is not None else ([], [], [])
@@ -118,8 +123,8 @@ def build_annotation(name, args, out):
             def _px(p):
                 return (int(round(p[0])), int(round(p[1])))
 
-            n_top = min(8, len(grasps))
-            # painter's algorithm: 接触面 C 的相机系 z（深度）降序 = 远的先画
+            GREEN = _MASK_COLORS[0]
+            n_top = min(12, len(grasps))
             order = sorted(
                 range(n_top),
                 key=lambda i: -float(np.asarray(grasps[i])[2, 3]
@@ -129,35 +134,24 @@ def build_annotation(name, args, out):
                 g = np.asarray(grasps[i], float)
                 O, R = g[:3, 3], g[:3, :3]
                 X, Z = R[:, 0], R[:, 2]
-                w = float(openings[i]) if openings is not None and len(openings) > i else 0.05
-                C = O + Z * 0.1034  # palm→指尖接触面（CGN 约定, GRIPPER_DEPTH_PANDA）
-                color = _MASK_COLORS[i % len(_MASK_COLORS)]
-                thick = 2 if i < 3 else 1
+                C = O + Z * 0.1034   # 指尖接触面（物理, GRIPPER_DEPTH_PANDA）
+                P = C - Z * 0.06     # 掌心端显示位（示意指长 6cm）
+                w = 0.08             # 固定全开（官方约定）
                 segs = [
-                    (O - X * w / 2, O + X * w / 2),   # palm 横杠
-                    (O + X * w / 2, C + X * w / 2),   # 指线 +
-                    (C + X * w / 2, C - X * w / 2),   # 指尖横杠
-                    (C - X * w / 2, O - X * w / 2),   # 指线 −
+                    (P - X * w / 2, P + X * w / 2),   # palm 横杠
+                    (P + X * w / 2, C + X * w / 2),   # 指 +
+                    (P - X * w / 2, C - X * w / 2),   # 指 −
+                    (P, P - Z * 0.04),                # 短刺: 臂来方向
                 ]
-                tube = (O, O + Z * 0.2)               # 逼近管 0.2m（官方同长）
-                proj = [(_project(K, a), _project(K, b)) for a, b in segs + [tube]]
+                proj = [(_project(K, a), _project(K, b)) for a, b in segs]
                 if any(pa is None or pb is None for pa, pb in proj):
                     continue
-                for pa, pb in proj[:4]:
-                    cv2.line(vis, _px(pa), _px(pb), color, thick, cv2.LINE_AA)
-                ta, tb = proj[4]
-                cv2.arrowedLine(vis, _px(ta), _px(tb), color, thick, cv2.LINE_AA, 0, 0.1)
-                if i == 0:
-                    pc_c = _project(K, C)
-                    if pc_c is not None:
-                        _cross(vis, pc_c[0], pc_c[1], color)
-                        cv2.putText(vis, f"{float(scores[i]):.2f}",
-                                    (int(round(pc_c[0])) + 3, int(round(pc_c[1])) - 3),
-                                    _FONT, 0.34, color, 1, cv2.LINE_AA)
+                for pa, pb in proj:
+                    cv2.line(vis, _px(pa), _px(pb), GREEN, 1, cv2.LINE_AA)
                 vert = float(abs(R[:, 2][1]))  # 垂直度代理: cam 系 |approach·(0,1,0)|
                 if vert > best_vert_v:
                     best_vert_v, best_vert_i = vert, i
-            # P2: REC 标记最垂直候选（圈+REC）
+            # REC 圈标推荐候选（D3 最垂直）
             if best_vert_i >= 0:
                 g = np.asarray(grasps[best_vert_i], float)
                 C = g[:3, 3] + g[:3, :3][:, 2] * 0.1034
