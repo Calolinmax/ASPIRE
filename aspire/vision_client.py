@@ -4,6 +4,13 @@
     from .vision_client import segment_sam3_text_prompt, segment_sam3_point_prompt, warmup, grasp_cgn
 """
 
+# =============================================================================
+# 🔒 冻结警示（2026-08-05 用户裁决）：本文件属已完成并经验证的 API/组件
+# （docs/api_asset_map.md 看板 `- [x]` 项）——
+# **此处只有人类（顾问也不行）批准，才能更改。**
+# =============================================================================
+
+
 from __future__ import annotations
 
 import pickle

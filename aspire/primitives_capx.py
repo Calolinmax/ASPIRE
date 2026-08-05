@@ -8,8 +8,8 @@ control_reduced.py，privileged=false 的 cube_stack 配置所注入的函数集
   |------------------------------------|---------------------------------------|
   | SAM3 server (HTTP)                 | 本地 SAM3 (aspire.vision_sam3, 同权重) |
   | Molmo server (vLLM)                | SAM3 级联 shim (同名同签名)            |
-  | Contact-GraspNet server            | 几何抓取规划器 (同签名/同坐标约定)     |
-  | pyroki IK server (panda URDF)      | MuJoCo DLS IK (grip_site, 同收敛语义) |
+  | Contact-GraspNet server            | CGN docker 容器 (官方 TF 版, 同约定)   |
+  | pyroki IK server (panda URDF)      | pyroki server (独立 venv) + DLS 兜底  |
   | JOINT_POSITION 力矩控制            | position 执行器直写 (真机同模式)       |
 
 与 cap-x 契约保持一致：函数名/签名/返回结构、基座坐标系、wxyz 四元数、阻塞语义、
@@ -22,6 +22,15 @@ plan_grasp 的相机系返回约定、solve_ik 的"目标=夹爪 TCP 位姿"语�
      这里保持 pose_mat 为真刚体变换，便于直接复合抓取位姿）。
   2. robot_joint_pos 为 (7,) = 6 臂关节 + 夹爪开合度（Franka 为 7+1=(8,)）。
 """
+
+# =============================================================================
+# 🔒 冻结警示（2026-08-05 用户裁决）：本模块中已完成并经行为验证的 API 项
+# （docs/api_asset_map.md 看板 `- [x]` 项：cap-x 契约 10 函数、plan_grasp /
+# grasp_cgn（CGN 官方 TF 版集成）、cgn_to_gripper retarget 链、solve_ik 链
+# （pyroki+DLS+库+滚转扫描+loose）、move_to_joints(+_safely)、碰撞采集
+# _collect_collision_events/_collision_free_q 判对规则）——
+# **此处只有人类（顾问也不行）批准，才能更改。**
+# =============================================================================
 
 from __future__ import annotations
 
@@ -60,26 +69,34 @@ GRASP_CENTER_DROP = 0.02  # 可见顶面 → 估计中心的下探量 (m)
 
 # CGN 坐标变换参数（两层常量分开，勿合并 —— 2026-07-31 变换链调试结论）
 #
-# 层 1（Panda 约定层）: CGN 输出的物理含义。
-#   pred_grasps_cam 4x4 直接把 Panda gripper 模型整体放置（官方可视化
-#   draw_grasps/plot_mesh 证实）：原点 = hand base(palm)，局部 +z = 逼近方向
-#   (腕部→指尖)，指尖垫接触平面在局部 +z GRIPPER_DEPTH_PANDA 处
-#   （0.1034 为接触面，物理指尖尖端实测 0.1122 = 0.0584+finger.stl z_max 0.0538）。
-GRIPPER_DEPTH_PANDA = 0.1034
+# 层 1（CGN 服务端夹爪约定层）: CGN 输出的物理含义。
+#   pred_grasps_cam 4x4 直接放置服务端 gripper 模型：原点 = 掌根(hand root)，
+#   局部 +z = 逼近方向(腕部→指尖)，指尖垫接触平面在局部 +z GRIPPER_DEPTH_CGN 处。
+#   【2026-08-04 曾改 Piper(0.045) → 同日回退】: 用户裁决——CGN 输出是基准,
+#   不许动（改的是"末端去够输出"的链, 不是输出）。estimator 已支持 config
+#   透传 gripper_depth, config 不写即默认 Panda 0.1034（指尖尖端 0.1122）。
+GRIPPER_DEPTH_CGN = 0.1034
 #
-# 层 2（Piper 实测层）: 抓取点(指尖接触面) → Piper TCP 的偏移。
-#   Piper grip_site 由 gripper.xml 的 eef body 定义在「指尖垫接触面中点」
-#   (eef pos="0 0 -0.045" 即接触平面，quat 翻转使 site z=逼近方向、y=开合轴)，
-#   与 CGN 的指尖接触平面语义同一点 → 偏移为 0。
-TCP_DEPTH_PIPER = 0.0
+# 层 2（Piper 实测层）: CGN 指尖接触面 → Piper TCP 的偏移。
+#   【2026-08-05 用户指令: 指尖对齐, piper 对齐 cgn, cgn 不动】
+#   【同日解剖修正】官方 STL/控制点实测: Panda 掌体 0~58.4mm, 手指
+#   58.4~112.2mm, 0.1034 是指垫捏取面而非指尖尖——指尖尖在 0.1122。
+#   指尖对齐 = Piper 指尖尖(site 前 50mm, 网格实测) ↔ Panda 指尖尖 0.1122:
+#   site 锚在接触面后 0.1034-0.0412=62.2mm 处(0.1122-0.050)。
+#   （上一个中间值 0.050 对齐的是捏取面 0.1034; 再早 0.0 = site 锚捏取面）
+TCP_DEPTH_PIPER = 0.0412
 #
 # Piper 最大开度（可行性过滤上限）：joint7 range [0, 0.035]/指（gripper.xml），
-# 双指全开嘴内净距约 45mm（gripper.xml 注释，原模型实测），取净距为上限。
-PIPER_MAX_WIDTH = 0.045
+# 双指全开嘴内净距 70mm（内净距 = 2·q7：q7=0 两垫贴合，q7=0.035 内面 ±35mm）。
+# 【2026-08-04 修正】旧值 45mm 系坐标系混淆误测：指垫盒局部半尺寸 (15,15,2.5)mm
+# 经 link body 180° 旋转后 y↔z 互换，沿开合轴的半厚度是 2.5mm 而非 15mm
+# （旧账 中心距74.9−2×15=44.9；正确 74.9−2×2.5≈70；mj_forward+mesh 顶点双重验证）。
+PIPER_MAX_WIDTH = 0.070
 
-GRIPPER_DEPTH = GRIPPER_DEPTH_PANDA  # 兼容旧引用（勿新增使用）
+GRIPPER_DEPTH = GRIPPER_DEPTH_CGN  # 兼容旧引用（勿新增使用）
 
 
+# 🔒 仅人类可改（2026-08-05 用户裁决：API 为只调用面, 顾问无权批准更改）
 def cgn_to_gripper(g_cgn, pose_mat, T_base_world=None):
     """CGN 相机系位姿 → 基座系 Piper grip_site 位姿。
 
@@ -89,9 +106,11 @@ def cgn_to_gripper(g_cgn, pose_mat, T_base_world=None):
       Step 3: 手指轴对齐：CGN 局部 x = Panda 开合轴 → Piper grip_site y = 开合轴，
               绕局部 z 转 -90°（robosuite xyzw 序四元数）
       Step 4: palm → 指尖接触平面：沿局部 +z（逼近方向）平移
-              GRIPPER_DEPTH_PANDA - TCP_DEPTH_PIPER。
+              GRIPPER_DEPTH_CGN - TCP_DEPTH_PIPER。
               【历史 bug：曾写 -0.1034，把 palm 往后撤了 0.1034，与正确值
               差 2×0.1034≈+0.207m —— 即观测到的 z 系统性 +20cm】
+      Step 5: 逼近轴反转（2026-08-03）：site 局部 +z 指向掌心而非物体，
+              绕开合轴 y 转 180° 使 IK 目标与真实手指方向一致。
 
     Args:
         g_cgn: (4,4) CGN 输出，OpenCV 相机系（原点 palm，+z 逼近）
@@ -99,11 +118,20 @@ def cgn_to_gripper(g_cgn, pose_mat, T_base_world=None):
         T_base_world: 未使用（兼容参数）
 
     Returns:
-        (4,4) 基座系 grip_site 位姿（位置 = 指尖接触面中点 = 抓取点）
+        (4,4) 基座系 grip_site 位姿（site = 指垫捏取面(0.1034)后 62.2mm 处——
+        实体指尖尖对齐 CGN/Panda 指尖尖 0.1122, 2026-08-05 用户指令;
+        详见 TCP_DEPTH_PIPER 常量注释）
     """
-    # Step 1: OpenCV→OpenGL（Y轴翻转）
+    # Step 1: OpenCV→OpenGL（Y轴翻转）。
+    # 【2026-08-03 根因修复】基变换必须共轭作用: 左乘+右乘 T_flip。
+    # 原写法只左乘 —— T_flip 的旋转部分 det=-1(镜像), 使每个候选姿态变成
+    # 非正交反射; 下游 mat2quat 静默把反射映射成某个合法但错误的旋转
+    # (实测往返误差 90°), solve_ik 收敛到的是被 mangled 的目标。
+    # 污染范围: 全部经此函数的 IK 目标(4-yaw 扫描 52% 收敛率、门禁候选、
+    # 幻影收敛 134°)。位置精度不受影响(T_flip 无平移, 右乘不改变平移),
+    # 与历史 <2cm 位置验证兼容。库 FK 地图未经过此链, 数据干净。
     T_flip = np.diag([1, -1, 1, 1])
-    g_gl = T_flip @ g_cgn
+    g_gl = T_flip @ g_cgn @ T_flip  # T_flip 自逆; 共轭后 det=+1
 
     # Step 2: 相机系→基座系（pose_mat 已经是 cam→base）
     g_base = pose_mat @ g_gl
@@ -116,8 +144,16 @@ def cgn_to_gripper(g_cgn, pose_mat, T_base_world=None):
 
     # Step 4: palm → 指尖接触平面(= Piper grip_site)，沿局部 +z（逼近方向）
     T_offset = np.eye(4)
-    T_offset[2, 3] = GRIPPER_DEPTH_PANDA - TCP_DEPTH_PIPER
+    T_offset[2, 3] = GRIPPER_DEPTH_CGN - TCP_DEPTH_PIPER
     g_final = g_grip @ T_offset
+
+    # Step 5: 【2026-08-03 根因修复——逼近轴方向反转】Piper grip_site 的
+    # 局部 +z 从指尖指向掌心（与 CGN/Panda 的 +z=逼近 相反, 用户手动拖拽
+    # 实证: site z列朝上时手指朝下包住方块）。绕局部 y(开合轴)转 180°:
+    # z→-z, x→-x, y 不变, det 保持 +1, 位置不变(绕自身原点)。
+    # 历史上所有"IK 不收敛/下降墙/可达性边界"结论均由此反向目标产生, 作废。
+    T_approach_flip = np.diag([-1.0, 1.0, -1.0, 1.0])
+    g_final = g_final @ T_approach_flip
 
     return g_final
 
@@ -138,7 +174,7 @@ def filter_grasps_by_width(grasps, scores, openings, contact_dist=0.04,
         contact_dist: 接触间距（米）。sim 阶段允许用方块 GT 尺寸：
             cubeA 为 4cm 立方（axis-aligned），对面夹取接触间距 0.04m。
             【TODO(真机): 从候选接触几何/点云沿闭合轴投影估算，勿用 GT】
-        max_width: Piper 最大开度（默认 PIPER_MAX_WIDTH=0.045）
+        max_width: Piper 最大开度（默认 PIPER_MAX_WIDTH=0.070）
         margin: 余量（默认 0.004 = 2×2mm）
 
     Returns:
@@ -254,6 +290,8 @@ def _collision_free_q(q: np.ndarray, engine) -> bool:
 
     背景 (实测): overhead 钩抓的某些 IK 分支把肘部 (link2/3) 压进桌面,
     位置伺服撞上后完全卡死 (TCP 偏差 >20cm)。指尖 - 方块接触允许。
+    2026-08-04 起腕部(link6)碰撞几何已常态化幽灵化（robot.xml, 用户裁决:
+    接触任务腕部贴近目标是几何必然）——腕部接触不再产生, 无需在此豁免。
     """
     model = engine.env.sim.model._model
     data2 = mujoco.MjData(model)
@@ -271,7 +309,8 @@ def _collision_free_q(q: np.ndarray, engine) -> bool:
         if not arm_hit:
             continue
         other = pair - set(arm_hit)
-        if any(("table" in o) or ("pedestal" in o) or ("floor" in o) or ("cube" in o) for o in other):
+        if any(("table" in o) or ("pedestal" in o) or ("floor" in o)
+               or ("cube" in o) or ("riser" in o) for o in other):  # riser: 2026-08-03 裁决
             return False
     return True
 
@@ -347,6 +386,7 @@ class PrimitiveContextCapx:
     # ------------------------------------------------------------------
     # 1. 观测
     # ------------------------------------------------------------------
+    # 🔒 仅人类可改（2026-08-05 用户裁决：API 为只调用面, 顾问无权批准更改）
     def get_observation(self) -> dict[str, Any]:
         """获取环境观测（基座坐标系）。
 
@@ -423,6 +463,7 @@ class PrimitiveContextCapx:
         out.sort(key=lambda r: r["score"], reverse=True)
         return out
 
+    # 🔒 仅人类可改（2026-08-05 用户裁决：API 为只调用面, 顾问无权批准更改）
     def segment_sam3_text_prompt(self, rgb: np.ndarray, text_prompt: str) -> list[dict]:
         """SAM3 文本提示分割（GPU 本地推理，开放词汇）。
 
@@ -436,6 +477,7 @@ class PrimitiveContextCapx:
         """
         return self._to_capx_results(_sam3_text_raw(np.asarray(rgb), text_prompt))
 
+    # 🔒 仅人类可改（2026-08-05 用户裁决：API 为只调用面, 顾问无权批准更改）
     def segment_sam3_point_prompt(self, rgb: np.ndarray, point_coords) -> list[dict]:
         """SAM3 点提示分割（Tracker，前景点 → 该实例的候选 mask）。
 
@@ -448,6 +490,7 @@ class PrimitiveContextCapx:
         """
         return self._to_capx_results(_sam3_point_raw(np.asarray(rgb), point_coords))
 
+    # 🔒 仅人类可改（2026-08-05 用户裁决：API 为只调用面, 顾问无权批准更改）
     def grasp_cgn(self, rgb, depth, K, seg, z_range=(0.2, 2.0)):
         """CGN 抓取检测（trace 包装版）。
 
@@ -456,6 +499,7 @@ class PrimitiveContextCapx:
         """
         return _grasp_cgn_raw(depth, K, seg, z_range=z_range, return_openings=True)
 
+    # 🔒 仅人类可改（2026-08-05 用户裁决：API 为只调用面, 顾问无权批准更改）
     def point_prompt_molmo(self, image: np.ndarray, text_prompt: str) -> dict:
         """文本→关键点定位（SAM3 级联实现，接口与 cap-x 的 Molmo 一致）。
 
@@ -471,6 +515,7 @@ class PrimitiveContextCapx:
     # ------------------------------------------------------------------
     # 3. 几何感知
     # ------------------------------------------------------------------
+    # 🔒 仅人类可改（2026-08-05 用户裁决：API 为只调用面, 顾问无权批准更改）
     def get_oriented_bounding_box_from_3d_points(self, points: np.ndarray) -> dict[str, Any]:
         """对 3D 点云做主轴拟合（PCA），返回有向包围盒。
 
@@ -520,60 +565,57 @@ class PrimitiveContextCapx:
         pts = np.stack([x, y, z], axis=1)
 
         # 中值区间中心（而非 median）: mask 含朝向相机的侧面时, median 会沿视线
-        # 偏移达半个物宽（实测 1.7cm, 40mm 方块 + 45mm 张嘴足以让指垫压到方块顶面）
+        # 偏移达半个物宽（实测 1.7cm, 40mm 方块 + 满开 70mm 张嘴足以让指垫压到方块顶面）
         lo = np.percentile(pts, 5, axis=0)
         hi = np.percentile(pts, 95, axis=0)
         centroid = (lo + hi) / 2
-        centered = pts - np.median(pts, axis=0)
-        # 顶面法线 = 最小特征向量；orient 使其指向相机一侧
-        # （相机在坐标原点, 表面点指向相机的方向是 -centroid）
-        cov = centered.T @ centered / len(centered)
-        eigvals, eigvecs = np.linalg.eigh(cov)
-        normal = eigvecs[:, 0]
-        if np.dot(normal, centroid) > 0:
-            normal = -normal
-
-        # 重力标定（与 cap-x 的 z_range 工作区过滤同级）: 世界竖直方向已知,
-        # 小/斜视角点云的 PCA 最小特征向量容易退化成视线方向（实测候选逼近轴
-        # 水平化, IK 不可达）——法线与竖直方向夹角 >60° 时吸附到竖直方向
-        E_muj = CU.get_camera_extrinsic_matrix(self.sim, ROBOTVIEW)
-        up_cam = E_muj[:3, :3].T @ np.array([0.0, 0.0, 1.0])  # 世界上方向(相机系)
-        up_cam /= np.linalg.norm(up_cam)
-        if np.dot(normal, up_cam) < 0:
-            up_cam = -up_cam
-        if np.dot(normal, up_cam) < np.cos(np.deg2rad(60.0)):
-            normal = up_cam
-        approach = -normal  # 抓取逼近方向（指向物体）
-
-        # TCP 目标点: 可见顶面质心下探 → 估计物体中心高度
-        tcp = centroid - normal * GRASP_CENTER_DROP
-
-        # 候选: 绕逼近轴 GRASP_N_YAW 个偏航; z 轴 = 逼近方向
-        zaxis = approach / np.linalg.norm(approach)
-        # 构造与 zaxis 垂直的基向量
-        ref = np.array([0.0, 0.0, 1.0]) if abs(zaxis[2]) < 0.9 else np.array([1.0, 0.0, 0.0])
-        u0 = np.cross(zaxis, ref)
-        u0 /= np.linalg.norm(u0)
-        v0 = np.cross(zaxis, u0)
-
-        # 得分: 顶面平面拟合质量（薄片点云 → 小特征值占比低）
-        planarity = float(np.clip(1.0 - eigvals[0] / max(eigvals.sum(), 1e-12), 0.0, 1.0))
         # cam(mujoco 约定)→基座系（与 get_observation 的 E_api 同构）
+        E_muj = CU.get_camera_extrinsic_matrix(self.sim, ROBOTVIEW)
         E_api = self.engine.T_base_world @ E_muj
-        grasps, scores = [], []
+        centroid_base = (E_api @ np.append(centroid, 1.0))[:3]
+
+        # 姿态族（2026-08-03 裁决 2b）: 距竖直 20~26° 倾斜 × 8 方位。
+        # 依据 ik_library 实证分布: tilt∈[18,30°] 共 10062 条, 8 个 45°
+        # 方位扇区 1080~1347 条全覆盖（scripts/diagnose_fallback_attribution.py）。
+        # 取代的 PCA 法线+重力吸附路线有三种实证失效（5-seed 门禁 15/15 全灭）:
+        #   正竖直吸附踩"0° tilt 全高度不收敛"死区（seed 5/12/23）;
+        #   up_cam 翻转 bug 致逼近轴朝天（seed 16, tilt=180°）;
+        #   侧面点污染法线倾斜 38.5° 出舒适带且偏向远离臂侧（seed 18）。
+        # 已知边界（如实声明）: 近臂落点（如 base x≈0.25）库中 6cm 内最小
+        # tilt=86.7°, 无任何陡降构型——布局死区, 姿态族无法挽救。
+        grasps = []
         for k in range(GRASP_N_YAW):
-            yaw = 2 * np.pi * k / GRASP_N_YAW
-            yaxis = np.cos(yaw) * u0 + np.sin(yaw) * v0  # 手指开合轴
+            az = 2 * np.pi * k / GRASP_N_YAW
+            tilt = np.deg2rad(20.0 + 6.0 * k / (GRASP_N_YAW - 1))  # 20~26° 分层
+            zaxis = np.array([np.sin(tilt) * np.cos(az),
+                              np.sin(tilt) * np.sin(az), -np.cos(tilt)])
+            # 开合轴 = 世界 x̂ 在 ⊥逼近轴平面上的投影（方块 axis-aligned,
+            # 闭合跨 ±x 对面; tilt≤26° 时投影模长 ≥cos26°>0.89, 无退化）
+            yaxis = np.array([1.0, 0.0, 0.0]) - zaxis[0] * zaxis
+            yaxis /= np.linalg.norm(yaxis)
             xaxis = np.cross(yaxis, zaxis)
-            R = np.column_stack([xaxis, yaxis, zaxis])
             Tg = np.eye(4)
-            Tg[:3, :3] = E_api[:3, :3] @ R
-            Tg[:3, 3] = (E_api @ np.append(tcp, 1.0))[:3]
+            # site +z 背向逼近（同 cgn_to_gripper Step 5, 2026-08-03）
+            Tg[:3, :3] = np.column_stack([xaxis, yaxis, zaxis]) @ np.diag([-1.0, 1.0, -1.0])
+            # 目标点: 质心沿逼近轴下探（zaxis 指向物体 → 正号进入物体）
+            Tg[:3, 3] = centroid_base + zaxis * GRASP_CENTER_DROP
             grasps.append(Tg)
-            scores.append(planarity * (1.0 - 0.05 * k))
-        order = np.argsort(scores)[::-1]
+
+        # 排序: 库支持度（6cm & 0.25rad 邻域条目数）降序——纯排序不拦截,
+        # 无库时退化自然序。score 即支持度, 日志可读。
+        lib = _ik_library()
+        if lib is False:
+            scores = [1.0 - 0.05 * k for k in range(GRASP_N_YAW)]
+        else:
+            scores = []
+            for Tg in grasps:
+                dp = np.linalg.norm(lib['P'] - Tg[:3, 3], axis=1)
+                da = np.arccos(np.clip(lib['Z'] @ Tg[:3, 2], -1.0, 1.0))
+                scores.append(float(((dp < 0.06) & (da < 0.25)).sum()))
+        order = sorted(range(GRASP_N_YAW), key=lambda k: -scores[k])  # 稳定序
         return np.stack(grasps)[order], np.asarray(scores)[order]
 
+    # 🔒 仅人类可改（2026-08-05 用户裁决：API 为只调用面, 顾问无权批准更改）
     def plan_grasp(self, depth: np.ndarray, intrinsics: np.ndarray,
                    segmentation: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """抓取规划（优先 CGN，失败回退几何规划器）。
@@ -609,13 +651,28 @@ class PrimitiveContextCapx:
     # ------------------------------------------------------------------
     # 4. 运动（IK + 阻塞关节运动）
     # ------------------------------------------------------------------
-    def solve_ik(self, position: np.ndarray, quaternion_wxyz: np.ndarray, use_pyroki: bool = True) -> np.ndarray:
+    # 🔒 仅人类可改（2026-08-05 用户裁决：API 为只调用面, 顾问无权批准更改）
+    def solve_ik(self, position: np.ndarray, quaternion_wxyz: np.ndarray, use_pyroki: bool = True,
+                 free_approach_roll: bool = False, seed: np.ndarray | None = None,
+                 loose: bool = False) -> np.ndarray:
         """数值 IK（pyroki 优先 + DLS 兜底），目标为夹爪 TCP 位姿（基座系）。
 
         Args:
             position: (3,) TCP 目标位置（基座系，米）
             quaternion_wxyz: (4,) TCP 目标姿态 [w,x,y,z]（基座系）
             use_pyroki: 是否优先调用 pyroki IK server（默认 True）
+            free_approach_roll: 绕逼近轴滚转自由（默认 False）。True 时只收敛
+                位置+逼近轴方向——方形截面目标（cubeA）合法，且 2026-08-04 实测
+                精确 6 自由度目标落在腕限位薄流形外（pyroki 最优 2.4-7mm、
+                DLS 撞 j4 限位卡死），不放宽则 12/12 不收敛。
+            seed: 可选 (6,) 种子构型。提供时先就地 DLS——分支连续
+                （2026-08-04: 预抓/下降两次独立 IK 会跳到 Δq>4rad 的远分支,
+                关节空间直扫画大弧撞块卡死; 笛卡尔细分+种子链锁定分支）。
+            loose: 中途点放宽容差（默认 False）。True 时 DLS 收敛判据
+                0.2mm/0.17° → 2mm/1.15°。【2026-08-05 q_pre 平台期事故:
+                边际候选(近垂直但腕区不佳) DLS 平台 ~1.5mm/0.57°(pyroki 与
+                多族种子同平台), 严格容差全拒 → q_pre 12/12 未收敛; 中途点
+                (预抓/下降中间步)位姿无关最终精度, 放宽; 末步/滚转抛光仍严格】
 
         Returns:
             (6,) 臂关节角 (rad)。不收敛抛 RuntimeError（可用 try/except 做可达性检查）
@@ -635,40 +692,7 @@ class PrimitiveContextCapx:
         q_lo = np.array([model.jnt_range[j][0] for j in jids])
         q_hi = np.array([model.jnt_range[j][1] for j in jids])
 
-        # ------------------------------------------------------------------
-        # 1) 优先使用 pyroki IK server（MJCF 真源 URDF），但用 MuJoCo FK 做后验验证
-        # ------------------------------------------------------------------
-        if use_pyroki:
-            try:
-                from .pyroki_client import ik_pyroki
-                q_pk = ik_pyroki(target_p_base, _q_in(quaternion_wxyz), prev_cfg=self.engine.current_arm_qpos())
-                q_pk = np.asarray(q_pk, dtype=np.float64).reshape(-1)
-                if q_pk.size >= 6:
-                    q_arm = np.clip(q_pk[:6], q_lo, q_hi)
-                    # FK 验证：pyroki 优化器偶尔给出误差 ~15mm/2° 的“成功”解，
-                    # 这种解在 move_to_joints 自检中会被拒绝；这里提前用 MuJoCo FK 筛掉。
-                    if _collision_free_q(q_arm, self.engine):
-                        data_v = mujoco.MjData(model)
-                        site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, EEF_SITE)
-                        qposadr_v = [int(model.jnt_qposadr[j]) for j in jids]
-                        for i, adr in enumerate(qposadr_v):
-                            data_v.qpos[adr] = q_arm[i]
-                        mujoco.mj_forward(model, data_v)
-                        fk_p = data_v.site_xpos[site_id]
-                        fk_p_base = (self.engine.T_base_world @ np.append(fk_p, 1.0))[:3]
-                        fk_R = data_v.site_xmat[site_id].reshape(3, 3)
-                        base_R = self.sim.data.xmat[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "robot0_base_link")].reshape(3, 3)
-                        rel_q_xyzw = T.mat2quat(base_R.T @ fk_R)
-                        fk_q_wxyz = np.array([rel_q_xyzw[3], rel_q_xyzw[0], rel_q_xyzw[1], rel_q_xyzw[2]])
-                        dpos = float(np.linalg.norm(fk_p_base - target_p_base))
-                        qdot = np.clip(np.abs(np.dot(fk_q_wxyz, quaternion_wxyz)), -1.0, 1.0)
-                        dquat = float(np.arccos(qdot))
-                        if dpos < 1e-3 and dquat < 0.01:
-                            return q_arm
-            except Exception:
-                # pyroki 失败时静默回退到 DLS
-                pass
-
+        # DLS 机制（2026-08-04 上移到 pyroki 之前——pyroki 粗解要用它抛光）
         data = mujoco.MjData(model)
         site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, EEF_SITE)
         dofadr = [int(model.jnt_dofadr[j]) for j in jids]
@@ -682,17 +706,27 @@ class PrimitiveContextCapx:
             return (data.site_xpos[site_id].copy(),
                     data.site_xmat[site_id].reshape(3, 3).copy())
 
-        def dls(q0, max_iter=600, tol_p=2e-4, tol_r=3e-3):
+        R_goal_holder = {'R': T.quat2mat(target_q)}  # 可写 holder: 滚转扫描兜底要换目标滚转
+
+        def dls(q0, max_iter=600, tol_p=None, tol_r=None):
             """限位投影 DLS。6 轴无冗余, 收敛域强烈依赖种子 → 多种子策略。"""
+            if tol_p is None:
+                tol_p = 2e-3 if loose else 2e-4
+            if tol_r is None:
+                tol_r = 2e-2 if loose else 3e-3
             q = np.clip(q0.copy(), q_lo, q_hi)
             jacp = np.zeros((3, model.nv))
             jacr = np.zeros((3, model.nv))
             lam = 0.05
-            R_goal = T.quat2mat(target_q)
+            R_goal = R_goal_holder['R']
             for _ in range(max_iter):
                 cur_p, cur_R = fk(q)
                 err_p = target_p - cur_p
                 err_r = _rot_err_vec(R_goal, cur_R)
+                if free_approach_roll:
+                    # 滚转自由: 投影掉绕逼近轴的误差分量, 只收敛 位置+逼近轴
+                    _a = R_goal[:, 2]
+                    err_r = err_r - _a * float(err_r @ _a)
                 n_p, n_r = np.linalg.norm(err_p), np.linalg.norm(err_r)
                 if n_p < tol_p and n_r < tol_r:
                     return q, True
@@ -708,10 +742,69 @@ class PrimitiveContextCapx:
             return q, False
 
         def dls_clean(q0):
+            # 2026-08-05 用户裁决: IK 筛选只看可达性不看碰撞（碰撞规避归路径
+            # 规划, 含腕部实体）——本函数不再有 _collision_free_q 门
             q, ok = dls(q0)
-            if ok and _collision_free_q(q, self.engine):
+            if ok:
                 return q, True
             return q, False
+
+        # 种子锁定通道（2026-08-04）: 给种子则先就地 DLS——分支连续
+        if seed is not None:
+            q_s, ok_s = dls_clean(np.asarray(seed, dtype=np.float64).reshape(6))
+            if ok_s:
+                return q_s
+
+        # ------------------------------------------------------------------
+        # 1) 优先使用 pyroki IK server（MJCF 真源 URDF），但用 MuJoCo FK 做后验验证
+        # ------------------------------------------------------------------
+        if use_pyroki:
+            try:
+                from .pyroki_client import ik_pyroki
+                q_pk = ik_pyroki(target_p_base, _q_in(quaternion_wxyz), prev_cfg=self.engine.current_arm_qpos())
+                q_pk = np.asarray(q_pk, dtype=np.float64).reshape(-1)
+                if q_pk.size >= 6:
+                    q_arm = np.clip(q_pk[:6], q_lo, q_hi)
+                    # FK 验证：pyroki 优化器偶尔给出误差 ~15mm/2° 的“成功”解，
+                    # 这种解在 move_to_joints 自检中会被拒绝；这里提前用 MuJoCo FK 筛掉。
+                    # 2026-08-05 用户裁决: IK 筛选只看可达性, 不查碰撞——
+                    # 原 _collision_free_q 门已移除(碰撞规避归路径规划, 含腕部)
+                    if True:
+                        data_v = mujoco.MjData(model)
+                        site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, EEF_SITE)
+                        qposadr_v = [int(model.jnt_qposadr[j]) for j in jids]
+                        for i, adr in enumerate(qposadr_v):
+                            data_v.qpos[adr] = q_arm[i]
+                        mujoco.mj_forward(model, data_v)
+                        fk_p = data_v.site_xpos[site_id]
+                        fk_p_base = (self.engine.T_base_world @ np.append(fk_p, 1.0))[:3]
+                        fk_R = data_v.site_xmat[site_id].reshape(3, 3)
+                        base_R = self.sim.data.xmat[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "robot0_base_link")].reshape(3, 3)
+                        rel_q_xyzw = T.mat2quat(base_R.T @ fk_R)
+                        fk_q_wxyz = np.array([rel_q_xyzw[3], rel_q_xyzw[0], rel_q_xyzw[1], rel_q_xyzw[2]])
+                        dpos = float(np.linalg.norm(fk_p_base - target_p_base))
+                        qdot = np.clip(np.abs(np.dot(fk_q_wxyz, quaternion_wxyz)), -1.0, 1.0)
+                        dquat = float(np.arccos(qdot))
+                        if free_approach_roll:
+                            # 姿态误差只取逼近轴失准分量（滚转分量不计）
+                            _Rg = T_goal_base[:3, :3]
+                            _a = _Rg[:, 2]
+                            _erv = _rot_err_vec(_Rg, base_R.T @ fk_R)
+                            dquat = float(np.linalg.norm(_erv - _a * float(_erv @ _a)))
+                        if dpos < 1e-3 and dquat < 0.01:
+                            return q_arm
+                        # 2026-08-04 根因修复: pyroki 优化解精度为 mm/亚度级
+                        # (实测残余 2.4mm/0.49°), 严格门(1mm/0.57°)全拒 → 落到
+                        # 远种子 DLS 兜底收敛率极低 → 12/12 未收敛事故。
+                        # 粗门(20mm/5.7°)放行进 DLS 抛光: 种子已在解邻域几乎
+                        # 必收敛到 0.2mm; phantom 解(>20mm/>5.7°)仍被挡在门外。
+                        if dpos < 0.02 and dquat < 0.1:
+                            q_p, ok_p = dls_clean(q_arm)
+                            if ok_p:
+                                return q_p
+            except Exception:
+                # pyroki 失败时静默回退到 DLS
+                pass
 
         # 种子 1: IK 库检索（离线稠密 FK, 按 位置+开口+开合轴 匹配近邻）
         lib = _ik_library()
@@ -744,15 +837,42 @@ class PrimitiveContextCapx:
             q, ok = dls_clean(s)
             if ok:
                 return q
+
+        # 滚转扫描兜底（2026-08-05, 仅 free_approach_roll）: 目标绕逼近轴滚 φ 后
+        # 位置+轴向不变, 是等价目标——近垂直抓可达性强烈依赖滚转角（腕限位把
+        # 可达滚转切成带状, 固定种子滚转常落不可达带 → DLS 平台期轴向误差
+        # 17~65°, 解剖实测）。扫描滚转偏移用规范种子族重试, 任一收敛即合法。
+        # 末段兜底, 只在前面全部失败后才付出 ~5×种子族 的代价。
+        if free_approach_roll:
+            R_goal0 = R_goal_holder['R']
+            for phi in (np.pi / 4, -np.pi / 4, np.pi / 2, -np.pi / 2, np.pi):
+                c, sp = np.cos(phi), np.sin(phi)
+                R_goal_holder['R'] = R_goal0 @ np.array([[c, -sp, 0], [sp, c, 0], [0, 0, 1]])
+                for s in seeds:
+                    q, ok = dls_clean(s)
+                    if ok:
+                        return q
+            R_goal_holder['R'] = R_goal0
         raise RuntimeError(f"solve_ik 未收敛: pos={position} quat={quaternion_wxyz}")
 
-    def move_to_joints(self, joints: np.ndarray) -> None:
+    # 🔒 仅人类可改（2026-08-05 用户裁决：API 为只调用面, 顾问无权批准更改）
+    def move_to_joints(self, joints: np.ndarray, tol: float = None,
+                       fk_tol: float = None) -> None:
         """关节空间运动（阻塞）。
 
         Args:
-            joints: (6,) 目标关节角 (rad)。命令后等待 ‖q-target‖₂ < 0.02 rad，
+            joints: (6,) 目标关节角 (rad)。命令后等待 ‖q-target‖₂ < tol，
                 最多约 5 秒；未到位抛 RuntimeError（不再静默返回）。
+            tol: 到位阈值（默认 JOINT_TOL=0.02）。接触段（下降/抬升）放宽到
+                ~0.10——位置伺服顶着接触残余沉降不到严格阈值（2026-08-03
+                实测: 下降残余 0.068, 负载抬升残余 0.029, 物理正常）。
+            fk_tol: FK 到位自检阈值（默认 0.01m）。接触段放宽——接触使 TCP
+                合法偏离自由空间目标位形。
         """
+        if tol is None:
+            tol = JOINT_TOL
+        if fk_tol is None:
+            fk_tol = 0.01
         target = np.asarray(joints, dtype=np.float64).reshape(6)
         best_err, stall = np.inf, 0
         self._last_collision_events = []
@@ -761,7 +881,7 @@ class PrimitiveContextCapx:
             self.engine.step_joints(target)
             self._last_collision_events.extend(_collect_collision_events(self.engine, seen_pairs))
             err = np.linalg.norm(self.engine.current_arm_qpos() - target)
-            if err < JOINT_TOL:
+            if err < tol:
                 break
             # 卡死检测: 30 拍无进展则提前抛错 (如被遮挡物挡住, 不再傻等 5s)
             if err < best_err - 1e-3:
@@ -773,13 +893,13 @@ class PrimitiveContextCapx:
         else:
             raise RuntimeError(f"move_to_joints 未到位: err={err:.4f}rad target={target}")
 
-        # FK 到位自检: 目标构型 FK 与当前 sim TCP 偏差 >1cm 说明执行器/物理异常
+        # FK 到位自检: 目标构型 FK 与当前 sim TCP 偏差 >fk_tol 说明执行器/物理异常
         fk_pos = _fk_tcp(target, self.engine)
         site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, EEF_SITE)
         cur_pos = self.sim.data.site_xpos[site_id]
         fk_base = (self.engine.T_base_world @ np.append(fk_pos, 1.0))[:3]
         cur_base = (self.engine.T_base_world @ np.append(cur_pos, 1.0))[:3]
-        if np.linalg.norm(fk_base - cur_base) > 0.01:
+        if np.linalg.norm(fk_base - cur_base) > fk_tol:
             raise RuntimeError(
                 f"move_to_joints FK 自检失败: 偏差 {np.linalg.norm(fk_base - cur_base) * 1000:.1f}mm"
             )
@@ -800,11 +920,13 @@ class PrimitiveContextCapx:
                 raise RuntimeError(f"路径第{i}/{n}段末构型碰撞")
             self.move_to_joints(q_wp)
 
+    # 🔒 仅人类可改（2026-08-05 用户裁决：API 为只调用面, 顾问无权批准更改）
     def open_gripper(self) -> None:
         """张开夹爪（阻塞至到位）。"""
         self.engine.set_gripper(1.0)
         self.engine.hold_ticks(GRIPPER_SETTLE_TICKS)
 
+    # 🔒 仅人类可改（2026-08-05 用户裁决：API 为只调用面, 顾问无权批准更改）
     def close_gripper(self) -> None:
         """闭合夹爪（阻塞）。是否夹住需通过 robot_joint_pos[-1] 观测判断。"""
         self.engine.set_gripper(0.0)

@@ -114,11 +114,12 @@
       <!-- 控制器基座参考系 (robosuite 复合控制器要求 {arm}_center) -->
       <site name="right_center" pos="0 0 0" size="0.01" rgba="1 0.3 0.3 1" group="1"/>
 
-      <!-- 第三人称相机: 视线方向与 robosuite agentview 完全一致 (quat 直接复用,
-           base_link 无旋转故局部系=世界系平移), 位置按 Piper 工作区尺度平移缩放。
-           基座在桌面上 (z=0.80) 时, 相机世界位 ≈ (0.48, 0, 1.23), 看向工作区中心。
-           A0.5 调整: 拉近10cm (pos 0.78->0.68), 顺时针旋转180度 -->
-      <camera name="robotview" mode="fixed" pos="0.68 0 0.46" quat="0.653 -0.271 0.271 -0.653" fovy="60"/>
+      <!-- 第三人称相机: 【2026-08-03 用户肉审定稿并锁死】
+           权限: 只有人类用户有权修改本相机 pos/quat, 顾问/执行者不得改动。
+           定稿: world (-0.231,0,1.42), 俯角 70°, 横向对正台面中线——
+           视野几乎全桌面, home 位姿仅小臂入镜, 图像轴与桌面边平行。
+           同步项: engine_capx.ROBOTVIEW_CAM_WORLD (走廊约束基准, 同锁) -->
+      <camera name="robotview" mode="fixed" pos="0.069 0.000 0.620" quat="0.6964 -0.1228 -0.1228 0.6964" fovy="60"/>
 
       <body name="link1" pos="0 0 0.123" quat="0.707105 0 0 -0.707108" gravcomp="1">
         <inertial pos="0.00131676 0.000310289 -0.00922875" quat="0.557105 0.432155 0.377373 0.600388" mass="0.097868"
@@ -223,6 +224,11 @@
                     diaginertia="0.001 0.001 0.001"/>
                   <joint frictionloss="0.3" armature="0.005" name="joint6" axis="0 0 1" range="-3.14 3.14"/>
                   <geom quat="0.707105 0 0 0.707108" mesh="link6" material="gray_mat" group="1" type="mesh" contype="0" conaffinity="0" density="0"/>
+                  <!-- 腕部碰撞几何（2026-08-05 用户裁决恢复实体：IK 筛选已摘碰撞门, 避障改由路径规划负责, 规划需要腕部实体; 原 08-04 幽灵化理由=旧锚点腕部贴方块误杀 IK, 现锚点腕部离方块 ~10mm 不成立）: 接触性任务中腕部
+                       贴近/托住目标是几何必然（实测 g6_col 与 cubeA 穿模 -2.8~-36mm
+                       随抓点高度）, 检测只会误杀全部抓取 IK（基线组 5 seed 全灭）。
+                       本任务腕部仅接近目标方块（从不碰桌/杂物, 碰撞对取证实测）,
+                       geom 级幽灵化 ≈ 豁免腕部-目标对。恢复: 去掉下行 contype/conaffinity -->
                   <geom quat="0.707105 0 0 0.707108" mesh="link6" group="0" type="mesh"/>
                   <!-- 腕部相机: 装在 link6 (夹爪基部), 向 -z 方向看指尖/工作区
                        位置: 从 link6 原点向肩侧偏移 2cm、向上 5cm (避开夹爪本体)

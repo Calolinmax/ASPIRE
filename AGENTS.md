@@ -4,28 +4,38 @@
 
 ---
 
-## 0. 运行环境规则（每次执行脚本必守）
+## 0. 运行环境规则（按任务选环境，不要盲目套用单一环境）
 
-**所有 Python 脚本必须在 conda 环境 `aspire`（小写！）中运行。**
+**按任务类型选择运行方式（路由表）：**
 
-- 环境名：`aspire`（⚠️ 全小写，不是 ASPIRE）
-- Python 路径：`/home/stouching/anaconda3/envs/aspire/bin/python`
-- pip 路径：`/home/stouching/anaconda3/envs/aspire/bin/pip`
+| 任务类型 | 用什么跑 |
+|---|---|
+| 项目主代码（engine / primitives / scripts/ 下任务脚本、SAM3 客户端等） | `/home/stouching/anaconda3/envs/ASPIRE/bin/python`（conda 环境 `ASPIRE`，全大写，py3.12；旧小写 aspire 已删除） |
+| 安装主环境依赖 | `/home/stouching/anaconda3/envs/ASPIRE/bin/pip install ...` |
+| CGN 抓取服务 | 一律在 Docker 容器内运行（`docker run/exec`，镜像 `cgn-tf:25.02`，容器名 `cgn`），**不要**在宿主机任何 Python 下启动 CGN |
+| CGN 宿主机 fallback（仅留档调试用） | `external/cgn_venv/bin/python`（TF 版，正常任务不用） |
+| 非 Python 命令（git / docker / curl / nvidia-smi / 文件操作等） | 直接运行，无环境限制 |
 
-**推荐写法**（Bash 工具每次调用是新 shell，`conda activate` 不一定生效，直接用绝对路径最可靠）：
+- Bash 工具每次调用是新 shell，`conda activate` 不一定生效，用绝对路径最可靠。
+- ❌ 唯一禁令：不要用系统 python 或 conda base 环境跑项目主代码。
 
-```bash
-# ✅ 推荐：直接用环境的 python
-/home/stouching/anaconda3/envs/aspire/bin/python script.py
+**开源参考纪律（顾问与执行者共同遵守，违反即返工）：**
+凡功能存在开源实现——不限于本仓库 `external/` 下的 cap-x、contact_graspnet，
+也包括 PyPI/GitHub 上任何有具体实现的项目——动手前必须先读官方实现的
+**完整函数体**，逐一搞清细节（结构、参数、坐标约定、默认值、边界处理），
+**能直接照抄就直接照抄**，照抄不了就对齐；**禁止凭签名/文档印象/想象
+从 0 到 1 手搓**。即使判定「官方库跑不了」（如 mayavi 在容器里），也必须
+继续读它「怎么做的」——实现细节往往可直接移植。
+过往教训：CGN glyph 凭想象画三轮不合格，官方 draw_grasps 里开口 Π 结构一直是现成的。
 
-# ✅ 也可以：先 source 再 activate
-source /home/stouching/anaconda3/etc/profile.d/conda.sh && conda activate aspire && python script.py
+**外部资源下载规则（每次涉及下载必守）：**
 
-# ❌ 禁止：直接用系统 python 或 base 环境运行项目脚本
-python script.py
-```
-
-安装依赖同样必须用环境的 pip：`/home/stouching/anaconda3/envs/aspire/bin/pip install ...`
+- **HuggingFace**：需要拉模型/数据集时，**先请用户人工确认仓库可访问**——HF 存在
+  审批门控（gated repo），403/401 容易**误判为"项目不存在"**。拉取失败不得直接下
+  "不存在"的结论，先报给用户核查。
+- **GitHub 仓库名不要猜**：需要外部仓库时先问用户（用户可能已有本地副本，如 Piper
+  URDF 由用户自行提供）。文档中允许写死的 URL 仅限已验证来源（如 cap-x
+  `pyproject.toml` 的依赖声明）。
 
 ---
 
@@ -110,16 +120,47 @@ ASPIRE 采用**进化搜索过程 (Evolutionary Search Over Programs)** 来生�
 - 失败分析和调试的关键数据
 - 生成训练数据的基础
 
+### 3.5 Trace 目录结构规范
+
+每次任务执行生成一个独立目录，命名 `MMDD_HHMM_任务名`（同时刻冲突自动加 `_2` 后缀）。trace 目录只放**执行产物**；任务代码由 agent harness 管理，trace.json 的 `code_ref` 字段仅记录其路径引用：
+
+```
+traces/0727_1352_Stack/
+├── trace.json              # 全部 API 调用记录：事件顺序 ×【类别/输入/输出/观测】，图像只存链接
+└── images/
+    ├── top/    s00000.jpg ...   # 顶部原始帧（固定每 5 仿真步一帧 + 调用边界补帧，文件名=仿真步）
+    ├── wrist/  s00000.jpg ...   # 腕部原始帧（同帧率，顺序浏览=任务完整过程）
+    ├── depth/  s00000.jpg ...   # 顶部深度 colormap（仅 API 调用边界保存——深度只在感知调用时被消费）
+    ├── sam3/   005_segment_sam3_text_prompt.jpg ...  # SAM3 标注图（仅调用时保存）
+    └── <算法>/ ...              # 任务用到的每个图像算法一个文件夹（molmo/mask_to_world/grasp...）
+```
+
+规则：
+
+- **帧流零重复、关键帧不丢**：按 (流, 仿真步) 去重；每次 API 调用边界强制补帧，运动轨迹按文件名（仿真步）顺序可完整复盘。
+- **depth 不做固定帧率连拍**：它不是一直被消费的（只有 get_observation/mask_to_world 等感知调用用），只在调用边界保存，每条记录的 depth 链接始终有效。
+- **算法标注图每次调用都存**：包括"未检出"的帧（上面画 no mask）——那是失败定位的关键证据；未运行的算法不产生文件夹。
+- **图像与记录的关联全部由 trace.json 链接**：`visual_evidence`（调用前帧）/ `visual_evidence_after`（运动结束帧）指向帧流，`annotation` 指向算法标注图。
+
 ---
 
-## 4. CaP-X 替代方案（已确认）
+## 4. CaP-X 与 Coding Agent（2026-07-28 修订）
 
-**CaP-X = 按 API 文档生成控制代码的骨干 LLM（未开源）→ 由 Claude Code（K3）本机直接替代**
+**CaP-X 已开源**（github.com/capgym/cap-x，MIT），本地镜像 `external/cap-x/`。
+论文架构：ASPIRE = CaP-X 基底（primitive API + 仿真器）+ 三组件（执行引擎 trace /
+skill library / 进化搜索），本项目的定位是**复现三组件，cap-x 当插件不当宿主**。
 
+- ✅ API 基底：`FrankaControlApiReduced` 契约（`external/cap-x/capx/integrations/franka/control_reduced.py`）
+  → Piper 实现 `PiperControlApiReduced`（`aspire/primitives_capx.py`，10 函数 1:1）
+- ✅ Coding agent：Claude Code 本机直接担任（**与论文同构**——论文用 Claude Code + Opus 4.6 1M）
 - ❌ 不配置外部 API / 不写 CLI 调用框架（CLI 自动化留待无人值守阶段）
-- ✅ 替代充分条件：**一份完整的 Primitive API 文档**（每个函数的签名/参数/返回值/副作用/使用示例）
 - ✅ `open_details/` 下三个任务代码作为 few-shot 示例注入 prompt
 - 工作模式：交互式循环 —— 生成代码 → 执行引擎运行 → 看 trace → 修代码
+
+**当前进展与文档索引**：长期路线图见 `ASPIRE_REPRO_PLAN.md`（2026-07-28 重写）；
+cap-x/Piper 线的交接与验收标准见 `handoff_piper_control_api.md`（仓库根目录）；
+两条 API 线：Panda 线（`aspire/engine.py` + `aspire/primitives.py`，模块 2 存档）
+与 **cap-x/Piper 线（`aspire/engine_capx.py` + `aspire/primitives_capx.py`，当前主线）**。
 
 ---
 
@@ -131,4 +172,4 @@ ASPIRE 采用**进化搜索过程 (Evolutionary Search Over Programs)** 来生�
 
 ---
 
-*最后更新：2026-07-24*
+*最后更新：2026-07-28*

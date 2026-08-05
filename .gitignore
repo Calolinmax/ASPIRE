@@ -11,6 +11,18 @@ __pycache__/
 traces/
 *.log
 tmp/
+outputs/
+
+# 大模型权重与第三方资产（体积过大不入库，需本地下载）
+SAM3/
+external/
+models/
+
+# 本地工具配置
+.claude/
+
+# 个人笔记
+笔记.pdf
 
 # IDE
 .vscode/

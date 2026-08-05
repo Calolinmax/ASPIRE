@@ -106,13 +106,15 @@ def build_annotation(name, args, out):
         if name == "grasp_cgn":
             # 定稿画法（2026-07-31 用户肉审定版 F2, 规格见 docs/cgn_container.md §10）:
             #   开口 Π 三线段（palm 横杠+双指, 指尖不封口）, 统一绿 1px,
-            #   top-12 按接触面深度 painter 序（远先近后）。
+            #   top-5 按接触面深度 painter 序（远先近后; 倾斜抓时代 12 个
+            #   已成"乱签堆", 2026-08-03 裁决收窄保可读）。
             #   宽度固定全开 0.08m（官方 draw_grasps 默认约定, 不随 openings 变）。
             #   指尖端 = 真实接触面 C=O+Z·0.1034（物理, 不动）;
             #   掌心端显示位 = C-Z·0.06（示意指长 6cm——物理 10.34cm 在小物体上
             #   悬空太高, 纯显示压缩, 非物理长度）。
             #   短刺 0.04m 从掌心沿 -Z（臂来方向, 约止于物理 palm O）。
             #   封口矩形/点云剪影均已证伪, 禁止复活。
+            #   🔒 冻结（2026-08-05 用户裁决）: 此处只有人类（顾问也不行）批准才能更改。
             rgb, K = np.asarray(args[0]), np.asarray(args[2], float)
             vis = rgb.copy()
             grasps, scores, openings = out if out is not None else ([], [], [])
@@ -124,7 +126,7 @@ def build_annotation(name, args, out):
                 return (int(round(p[0])), int(round(p[1])))
 
             GREEN = _MASK_COLORS[0]
-            n_top = min(12, len(grasps))
+            n_top = min(5, len(grasps))
             order = sorted(
                 range(n_top),
                 key=lambda i: -float(np.asarray(grasps[i])[2, 3]
@@ -134,7 +136,8 @@ def build_annotation(name, args, out):
                 g = np.asarray(grasps[i], float)
                 O, R = g[:3, 3], g[:3, :3]
                 X, Z = R[:, 0], R[:, 2]
-                C = O + Z * 0.1034   # 指尖接触面（物理, GRIPPER_DEPTH_PANDA）
+                C = O + Z * 0.1034  # 指尖接触面（物理, GRIPPER_DEPTH_CGN; F2 定稿值,
+                                    # 2026-08-05 恢复——Piper 期 0.045 是偏离）
                 P = C - Z * 0.06     # 掌心端显示位（示意指长 6cm）
                 w = 0.08             # 固定全开（官方约定）
                 segs = [
@@ -154,11 +157,11 @@ def build_annotation(name, args, out):
             # REC 圈标推荐候选（D3 最垂直）
             if best_vert_i >= 0:
                 g = np.asarray(grasps[best_vert_i], float)
-                C = g[:3, 3] + g[:3, :3][:, 2] * 0.1034
+                C = g[:3, 3] + g[:3, :3][:, 2] * 0.1034  # GRIPPER_DEPTH_CGN (F2 定稿值)
                 pc_c = _project(K, C)
                 if pc_c is not None:
                     ctr = _px(pc_c)
-                    cv2.circle(vis, ctr, 10, (255, 80, 255), 1, cv2.LINE_AA)
+                    cv2.circle(vis, ctr, 10, (255, 80, 255), 2, cv2.LINE_AA)
                     cv2.putText(vis, "REC", (ctr[0] + 12, ctr[1] + 4),
                                 _FONT, 0.4, (255, 80, 255), 1, cv2.LINE_AA)
             _text(vis, [f"grasp_cgn: {len(grasps)} cand"])

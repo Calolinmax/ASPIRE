@@ -58,8 +58,10 @@ class Piper(ManipulatorModel):
 
     @property
     def init_qpos(self):
-        # 与原 MJCF keyframe "home" 一致 (臂向前上方伸展)
-        return np.array([0.0, 1.57, -1.3485, 0.0, 0.0, 0.0])
+        # 【2026-08-03 用户指定】全零位姿 = 官方零位（用户 MuJoCo viewer 截图
+        # 确认）: 臂前趴折叠, 连杆不直立。eef base 系 (0.145, 0, 0.211),
+        # _collision_free_q 通过。旧值: [0, 1.57, -1.3485, 0, 0, 0]（直立）。
+        return np.zeros(6)
 
     @property
     def base_xpos_offset(self):

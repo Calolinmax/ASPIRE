@@ -16,6 +16,13 @@ CLI:
     MUJOCO_GL=egl python -m aspire.engine_capx --code task.py --task Stack --seed 0
 """
 
+# =============================================================================
+# 🔒 冻结警示（2026-08-05 用户裁决）：本文件属已完成并经验证的 API/组件
+# （docs/api_asset_map.md 看板 `- [x]` 项）——
+# **此处只有人类（顾问也不行）批准，才能更改。**
+# =============================================================================
+
+
 from __future__ import annotations
 
 import argparse
@@ -97,8 +104,19 @@ GRIPPER_TRAVEL = 0.035      # joint7 全行程（0=闭合, 0.035=张开）
 # Piper 桌面工作区的方块放置范围（cap-x 的 Franka 范围为 x±0.18/y±0.12；
 # 按 25cm 立柱安装的可达带收缩: 基座系 x∈[0.28,0.40] —— 更高处 (悬停/放置
 # 预备 z≈0.7) 的可达边界在 x≈0.40-0.45 之间, 再远 IK 不收敛 (实测)）
-CUBE_X_RANGE = [-0.02, 0.10]
-CUBE_Y_RANGE = [-0.12, 0.12]
+CUBE_X_RANGE = [-0.15, -0.03]   # 2026-08-03 用户: 较初版移近, 再远离一点点
+CUBE_Y_RANGE = [-0.16, 0.16]    # 同日用户: 物品分散一些 (±0.12 → ±0.16)
+
+# 垫高台高度（2026-08-03 方案 1；同日用户终裁: 【物品不需要垫高】→ 0.0,
+# 台面不再创建, 物品直放桌面, sampler z_offset 回落 0.01。抬高换可达性的
+# 全部杠杆随之搁置, 重启须用户明确同意）。
+# 历史依据备查: 库 FK 地图（干净数据）证实抓握点 z≈0.12 高于陡降构型
+# z≥0.075 地板 + CGN 召回带台/无台持平; "收敛率平曲线"推导系反射污染期
+# 产物, 已作废（docs/cgn_container.md §11.1）。
+RISER_H = 0.0
+# 台面几何参数（RISER_H=0 时不创建台面, 仅备重启时使用）
+_RISER_CENTER_XY = (-0.09, 0.0)
+_RISER_HALF = (0.14, 0.20)   # 28×40cm 面板, 覆盖放置区+物体半径余量
 
 # P3: 视线走廊约束的包围球半径表（半对角线, 与 StackClutter 尺寸定义一致）
 _CORRIDOR_RADII = {
@@ -110,10 +128,20 @@ _CORRIDOR_RADII = {
 }
 
 # robotview 相机世界坐标（robosuite 编译模型 sim.data.cam_xpos 实测值,
-# 与 robot.xml pos="0.68 0 0.46" + 桌柱安装链一致）。 CorridorFreeSampler
+# 与 robot.xml pos="-0.220 0.120 0.420" + 桌柱安装链一致）。 CorridorFreeSampler
 # 需要世界系光心; _load_model 阶段模型未编译无法自取, 故为常量——
 # 安装/相机改动时必须同步更新（engine 初始化有漂移自检, 见 _post_reset）。
-ROBOTVIEW_CAM_WORLD = np.array([0.38, 0.0, 1.26])
+# 2026-08-03 相机搬家并经用户 5 轮肉审定稿: (-0.231,0,1.42), 俯角 70°,
+# 横向对正台面中线, 视野几乎全桌面, home 位姿仅小臂入镜。
+# 【锁死: 只有人类用户有权修改本常量与 robot.xml 的 robotview pos/quat,
+# 顾问提议一律转用户确认】
+ROBOTVIEW_CAM_WORLD = np.array([-0.231, 0.0, 1.42])
+
+# 收臂让拍位姿（2026-08-03 用户规定）: 只转 j1 = -90°, 臂从全零 home 直接
+# 摆向 -y 侧, 与相机走廊垂直。碰撞检查通过; 真实伺服路径 5 tick 到位
+# (err 0.0147 < 0.02)。注: 前两版多关节 tuck（库锚定 entry139633/141568）
+# 在台面加宽后夹爪碰撞体蹭 riser 导致伺服卡死, 已弃用。
+TUCK_Q = np.array([-1.5708, 0.0, 0.0, 0.0, 0.0, 0.0])
 
 
 class CorridorFreeSampler(UniformRandomSampler):
@@ -173,6 +201,32 @@ class StackClutter(suite.environments.manipulation.stack.Stack):
     干扰物颜色避开红色系，SAM3 "red cube" 仍唯一命中 cubeA。
     """
 
+    def __init__(self, *args, target_only=False, **kwargs):
+        # target_only=True: 桌面只留目标物体 cubeA（2026-08-04 用户指令）。
+        # 须在 super().__init__ 前落 flag —— _load_model 在其中被调用。
+        self._target_only = target_only
+        super().__init__(*args, **kwargs)
+
+    def _setup_references(self):
+        if getattr(self, '_target_only', False):
+            # 绕开 Stack 对 cubeB_main 的 body 解析（已移出模型, 新版 robosuite
+            # body_name2id 缺失即抛 ValueError）; 跳档调 ManipulationEnv 的。
+            super(suite.environments.manipulation.stack.Stack, self)._setup_references()
+            self.cubeA_body_id = self.sim.model.body_name2id(self.cubeA.root_body)
+            self.cubeB_body_id = -1
+        else:
+            super()._setup_references()
+
+    def reward(self, action=None):
+        if getattr(self, '_target_only', False):
+            return 0.0  # 无 cubeB, Stack  shaping 无意义且会解析缺失 body
+        return super().reward(action)
+
+    def _check_success(self):
+        if getattr(self, '_target_only', False):
+            return False
+        return super()._check_success()
+
     def _load_model(self):
         super(suite.environments.manipulation.stack.Stack, self)._load_model()
 
@@ -186,29 +240,56 @@ class StackClutter(suite.environments.manipulation.stack.Stack):
         )
         mujoco_arena.set_origin([0, 0, 0])
 
+        # 垫高台（方案 1）: arena 静态几何体（无 joint=焊接）, 位于放置区中心。
+        # 台面顶 = table_offset.z + RISER_H; 物体经 sampler z_offset 落台面。
+        # 2026-08-03 用户终裁 RISER_H=0: 物品不垫高, 不创建台面（零高 box 是
+        # 退化几何, 必须整个跳过）。
+        if RISER_H > 0:
+            import xml.etree.ElementTree as ET
+            riser_pos = [self.table_offset[0] + _RISER_CENTER_XY[0],
+                         self.table_offset[1] + _RISER_CENTER_XY[1],
+                         self.table_offset[2] + RISER_H / 2]
+            riser_body = ET.SubElement(mujoco_arena.worldbody, "body",
+                                       name="riser_platform",
+                                       pos="{} {} {}".format(*riser_pos))
+            ET.SubElement(riser_body, "geom", name="riser_top", type="box",
+                          size="{} {} {}".format(_RISER_HALF[0], _RISER_HALF[1], RISER_H / 2),
+                      rgba="0.82 0.78 0.72 1", condim="4",
+                      friction="1 0.005 0.0001")
+
         tex_attrib = {"type": "cube"}
         mat_attrib = {"texrepeat": "1 1", "specular": "0.4", "shininess": "0.1"}
         redwood = CustomMaterial(texture="WoodRed", tex_name="redwood",
                                  mat_name="redwood_mat", tex_attrib=tex_attrib, mat_attrib=mat_attrib)
         greenwood = CustomMaterial(texture="WoodGreen", tex_name="greenwood",
                                    mat_name="greenwood_mat", tex_attrib=tex_attrib, mat_attrib=mat_attrib)
-        self.cubeA = BoxObject(name="cubeA", size_min=[0.02, 0.02, 0.02], size_max=[0.02, 0.02, 0.02],
+        # cubeA 细高化（2026-08-03 裁决 3）: 4×4×4 → 4×4×8cm, 接触点上移到
+        # 4-6cm 高, 配合侧相机+低台组合拳。x/y 截面不变 → contact_dist 仍 0.04。
+        self.cubeA = BoxObject(name="cubeA", size_min=[0.02, 0.02, 0.04], size_max=[0.02, 0.02, 0.04],
                                rgba=[1, 0, 0, 1], material=redwood)
         self.cubeB = BoxObject(name="cubeB", size_min=[0.025, 0.025, 0.025], size_max=[0.025, 0.025, 0.025],
                                rgba=[0, 1, 0, 1], material=greenwood)
-        # 杂物尺寸软约束（P4, 面向未来多物体任务）: 新增杂物尽量至少有一个
-        # 维度 ≤4cm —— 让杂物本身也可被 Piper 抓取（净开度 4.49cm）。
-        # 不强制、不影响现有布局与 seed 复现; 当前 dist_box2(6cm)/dist_cyl
-        # 部分维度超限仅作背景, 其抓取由宽度过滤自然淘汰。
-        self.distractors = [
-            BoxObject(name="dist_box1", size_min=[0.02, 0.02, 0.03], size_max=[0.02, 0.02, 0.03],
-                      rgba=[0.1, 0.25, 0.8, 1]),
-            BoxObject(name="dist_box2", size_min=[0.015, 0.03, 0.02], size_max=[0.015, 0.03, 0.02],
-                      rgba=[0.5, 0.5, 0.5, 1]),
-            CylinderObject(name="dist_cyl", size=[0.018, 0.035], rgba=[0.9, 0.8, 0.1, 1]),
-            BallObject(name="dist_ball", size=[0.022], rgba=[0.5, 0.1, 0.6, 1]),
-        ]
-        objects = [self.cubeA, self.cubeB] + self.distractors
+        if self._target_only:
+            # 2026-08-04 用户指令: 桌面只留目标物体 cubeA（去 cubeB 与全部杂物）。
+            # cubeB 不进模型 → robosuite Stack 的 cubeB_body_id=-1, reward 为
+            # 垃圾值但本管线不使用; check_contact/观测传感器空转不炸。
+            self.distractors = []
+            objects = [self.cubeA]
+        else:
+            # 杂物尺寸软约束（P4, 面向未来多物体任务）: 新增杂物尽量至少有一个
+            # 维度 ≤4cm —— 让杂物本身也可被 Piper 抓取（净开度 70mm,
+            # 2026-08-04 修正自误测值 4.49cm, 详见 gripper.xml/cgn_container.md）。
+            # 不强制、不影响现有布局与 seed 复现; 当前 dist_cyl 长轴(7cm) 超限
+            # 仅作背景, 其抓取由宽度过滤自然淘汰。
+            self.distractors = [
+                BoxObject(name="dist_box1", size_min=[0.02, 0.02, 0.03], size_max=[0.02, 0.02, 0.03],
+                          rgba=[0.1, 0.25, 0.8, 1]),
+                BoxObject(name="dist_box2", size_min=[0.015, 0.03, 0.02], size_max=[0.015, 0.03, 0.02],
+                          rgba=[0.5, 0.5, 0.5, 1]),
+                CylinderObject(name="dist_cyl", size=[0.018, 0.035], rgba=[0.9, 0.8, 0.1, 1]),
+                BallObject(name="dist_ball", size=[0.022], rgba=[0.5, 0.1, 0.6, 1]),
+            ]
+            objects = [self.cubeA, self.cubeB] + self.distractors
 
         # 采样器必须在这里建（P3 调试结论）: robosuite hard_reset 每次 reset()
         # 都重跑 _load_model, 外部事后替换的 sampler 会被冲掉——
@@ -223,7 +304,7 @@ class StackClutter(suite.environments.manipulation.stack.Stack):
             ensure_object_boundary_in_range=False,
             ensure_valid_placement=True,
             reference_pos=self.table_offset,
-            z_offset=0.01,
+            z_offset=RISER_H + 0.01,   # 落垫高台面（原 0.01=桌面直放）
             rng=self.rng,
             cam_pos=ROBOTVIEW_CAM_WORLD,
             corridor_radii=_CORRIDOR_RADII,
@@ -246,8 +327,9 @@ class ExecutionEngineCapx(ExecutionEngine):
 
     def __init__(self, task: str = "Lift", seed: int = 0, trace_root: str = "traces",
                  render: bool = False, render_slowdown: float = 1.0,
-                 clutter: int | None = None):
+                 clutter: int | None = None, target_only: bool = False):
         self._clutter = (4 if task == "Stack" else 0) if clutter is None else clutter
+        self._target_only = target_only  # 桌面只留 cubeA（2026-08-04 用户指令）
         _ensure_vision_server()
         super().__init__(task=task, seed=seed, trace_root=trace_root,
                          render=render, render_slowdown=render_slowdown)
@@ -304,8 +386,8 @@ class ExecutionEngineCapx(ExecutionEngine):
         )
 
     def _make_env(self, kwargs: dict):
-        if self.task == "Stack" and self._clutter > 0:
-            env = StackClutter(**kwargs)
+        if self.task == "Stack" and (self._clutter > 0 or self._target_only):
+            env = StackClutter(target_only=self._target_only, **kwargs)
         else:
             env = suite.make(self.task, **kwargs)
         # 预置离屏缓冲区 1280×960: MJCF <visual> 在 robosuite 合并时被丢弃
@@ -459,7 +541,11 @@ class ExecutionEngineCapx(ExecutionEngine):
             d = d.squeeze(-1)
         d = np.clip(np.nan_to_num(np.asarray(d, dtype=np.float64), nan=1.0), 0.0, 1.0)
         real = CU.get_real_depth_map(self.env.sim, d)
-        lo, hi = 0.3, 2.0
+        # 量程贴合垫高台工作空间（2026-08-03 实测 seed16/18: 方块 mask 区
+        # 0.42~0.74m, 全场 p50=0.55m, 远景 2.5m 截断为饱和色）——原 [0.3,2.0]
+        # 把工作区压进 colormap 3% 区间, 物体侧面不可分。纯显示, CGN 消费
+        # 原始深度不受影响。
+        lo, hi = 0.40, 0.85
         norm = (np.clip(real, lo, hi) - lo) / (hi - lo)
         cm = cv2.applyColorMap((norm * 255).astype(np.uint8), cv2.COLORMAP_VIRIDIS)
         return cv2.cvtColor(cm, cv2.COLOR_BGR2RGB)

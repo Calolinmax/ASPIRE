@@ -1,145 +1,239 @@
-# ASPIRE 初步复现计划
+# ASPIRE 长期复现规划
 
-> 整理日期：2026-07-23
+> 重写日期：2026-07-28（项目已获长期批准，取代 2026-07-23 的 12h 初版计划）
 > 目标论文：ASPIRE: Agentic /Skills Discovery for Robotics（NVIDIA GEAR，2026）
 > 项目页：https://research.nvidia.com/labs/gear/aspire/
-> 论文 PDF：https://research.nvidia.com/labs/gear/aspire/assets/Aspire.pdf
+> 基底框架：CaP-X（已开源，本地镜像 [external/cap-x/](external/cap-x/)）
 
 ---
 
-## 1. 论文关键结论（复现的依据）
+## 0. 现状基线（2026-07-28 盘点）
 
-### 1.1 Skill Library 的形态
+### 已完成
 
-- Skill **不是**封装好的可执行函数（不是 `handover()` 这种可 import 的 API），而是**结构化的知识文档**（`SKILL.md`），以 in-context guidance 方式注入未来 agent 的 prompt。
-- 底层可执行的 primitive API（感知、规划、控制）是**人工预定义、固定不变的**；skill library 不会往 API 里注册新函数。
-- 每个 skill 条目四要素（论文附录 A）：
-  1. **Problem** — 从触发失败 trace 提取的失败特征（failure signature）
-  2. **When to Apply** — 适用/检索条件（guard）
-  3. **Strategy** — 验证过的修复策略，可附几行 code sketch
-  4. **Origin task(s)** — 来源任务
+| 资产 | 位置 | 状态 |
+|---|---|---|
+| 模块 1：仿真环境 + Lift 脚本化策略 | robosuite + Panda | ✅ 5/5 |
+| 模块 2：执行引擎 + trace 系统（**= 论文组件 1**） | [aspire/engine.py](aspire/engine.py) + [aspire/trace.py](aspire/trace.py) | ✅ Lift 4/4 |
+| 感知迁移：SAM3（transformers 本地权重） | [aspire/vision_sam3.py](aspire/vision_sam3.py) + 服务化 [vision_server.py](aspire/vision_server.py)/[vision_client.py](aspire/vision_client.py) | ✅ |
+| 环境迁移：conda `ASPIRE`（py3.12，大写） | — | ✅ 旧 `aspire`（py3.10）已删 |
+| CaP-X 源码镜像 | [external/cap-x/](external/cap-x/) | ✅ MIT |
+| Piper MJCF 适配 robosuite（4 个 XML 兼容问题已修） | [aspire/robots/](aspire/robots/) | ✅ |
+| cap-x 契约 API（Piper，10 函数 1:1） | [aspire/primitives_capx.py](aspire/primitives_capx.py) + [aspire/engine_capx.py](aspire/engine_capx.py) | ⚠️ 80%，Stack 未通 |
+| IK 种子库（37,655 条）+ overhead 钩抓姿态族 | [aspire/robots/assets/piper/ik_library.npz](aspire/robots/assets/piper/ik_library.npz) | ✅ |
+| API 自检脚本 | [scripts/test_piper_capx_api.py](scripts/test_piper_capx_api.py) | 待全 PASS |
 
-### 1.2 Skill 范式（附录 E.5 贴出的完整模板）
+### 进行中（交接状态）
 
-`SKILL.md` = YAML frontmatter（`name`、`description`）+ 固定栏目：
+cap-x/Piper 线因上一会话上下文超限中断，交接 prompt 在
+[handoff_piper_control_api.md](handoff_piper_control_api.md)（仓库根目录）。
+剩余阻塞（P0-P4）：运动可信化 → 工作区收紧 → 抓取闭环 → 感知兜底 →
+`PiperControlApiReduced` 类命名收尾 + 补 `docs/primitive_api_capx.md`。
 
-```
-> Purpose / Ownership（coordinator 才能改，subagent 只读）
-## 代码骨架（如标准 pick-and-place 流程）
-## When to NOT Use This Template（反例边界）
-## Per-Object Registry（随经验增长的参数表）
-## Anti-Patterns（禁止事项）
-## Debugging 表（症状 → 可能原因 → 检查方法）
-```
+---
 
-入库流程：actor 按 findings schema 上报（failure mode、validated repair、transferable patterns、task-specific quirks、验证成功率）→ coordinator 审计可复用性 + API 合规性 → 只把验证通过且可迁移的模式写入共享库。
+## 1. 论文关键结论（复现依据）
 
-### 1.3 开源状态
+### 1.1 ASPIRE 架构 = CaP-X 基底 + 三个组件
 
-**截至 2026-07-23 未开源**：项目页无代码链接，GitHub 搜不到官方仓库，CaP-X 也无公开仓库。论文中 "See code release" 为预留说法。可参考的只有论文附录贴出的部分模板（Figure 3 标注 "Skill Library (Partial)"）。
+论文明确：agent 用 **CaP-X** 的 robot programming APIs（感知/几何/运动规划）编写控制程序；
+benchmark 为 LIBERO-Pro、Robosuite 双臂 handover、BEHAVIOR-1K（恰为 cap-x 支持的三个仿真器家族）。
+ASPIRE 在此基底上增加三个组件：
+
+1. **闭环执行引擎**：每个 primitive 调用记录【观测、输入、输出、视觉证据】的多模态 trace
+   （含 perception overlays、grasp candidates、motion trajectories、**collision feedback**），
+   agent 据此自主诊断失败、合成修复、再执行验证 —— **本项目 engine+trace 已复现此组件**；
+2. **持续扩张的 skill library**：把验证过的修复蒸馏为可迁移知识（见 1.2）；
+3. **进化搜索**：生成多样任务序列与控制程序，系统性地 debug 以超越单轨迹精炼。
+
+论文的 coding agent：**Claude Code + Claude Opus 4.6（1M 上下文）**——本项目的
+工作方式（Claude Code 驱动复现）与论文实验设置同构。
+
+### 1.2 Skill Library 的形态
+
+- Skill **不是**可执行函数，而是**结构化知识文档**（`SKILL.md`），以 in-context guidance
+  注入未来 agent 的 prompt；底层 primitive API 人工预定义、固定不变。
+- 每个 skill 条目四要素（附录 A）：**Problem**（失败特征）/ **When to Apply**（检索 guard）/
+  **Strategy**（验证过的修复策略 + code sketch）/ **Origin task(s)**。
+- `SKILL.md` 模板（附录 E.5）：YAML frontmatter + 代码骨架 / When to NOT Use /
+  Per-Object Registry / Anti-Patterns / Debugging 表。
+- 入库流程：actor 按 findings schema 上报 → coordinator 审计可复用性 + API 合规性 →
+  只把验证通过且可迁移的模式写入共享库。
+
+### 1.3 开源状态（2026-07-28 更新）
+
+- ASPIRE：**未开源**（项目页无代码链接）；
+- CaP-X：**已开源**（github.com/capgym/cap-x，MIT），本地镜像 [external/cap-x/](external/cap-x/)。
 
 ### 1.4 论文的 sim2real 证据
 
-论文在 **Franka 仿真**中发现 skills，迁移到**双臂 YAM 真机站**（本体和 API 均不同），skills 作为 in-context guidance 显著降低真机编程 token 成本。说明：**skill 是本体无关的知识，同类型机械臂之间可迁移**；带物理参数的条目（z_offset、yaw 等）需在新本体上重新验证。
+论文在 Franka 仿真发现 skills，迁移到双臂 YAM 真机站（本体与 API 均不同），skills 作为
+in-context guidance 显著降低真机编程 token 成本。结论：**skill 是本体无关的知识**；
+带物理参数的条目（z_offset、yaw 等）需在新本体上重新验证。
 
 ---
 
-## 2. 已确认的决策
+## 2. 已确认的决策（2026-07-28 修订）
 
-| 项目                | 决策                                                                                                                                                   | 理由                                                                  |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| 真机                | 松灵 PiPER（6 轴 + 夹爪），后期包一层同名 primitive API（底层走 piper_sdk IK/关节控制）                                                                | 现有硬件                                                              |
-| 仿真臂              | **Franka Panda**（robosuite 内置 + MuJoCo Menagerie 模型 + 现成 OSC 控制器）                                                                     | 7 轴 vs 6 轴只影响 IK primitive 内部实现，不影响 skill 层；零建模成本 |
-| 仿真框架            | **robosuite**（基于 MuJoCo，自带任务 benchmark 和 `_check_success()` 成功判定）                                                                | 环境/benchmark/成功判定全白送，最大省时项                             |
-| PiPER 仿真模型      | 暂不需要；松灵官方 GitHub 有`piper_mujoco`，URDF/描述文件可从官方仓库获取转 MJCF，留作后期 sim2real 中间验证 | —                                                                    |
-| 感知 primitive      | **MobileSAM ONNX GPU**（vit_t 编码器，已部署）：`segment_sam3_text_prompt(rgb, "red_cube")` 返回真实分割 mask，双相机支持（agentview + wrist） | 有真实视觉噪声，可训练感知类 skill |
-| 运动 primitive      | IK + 路点插值；**不做导航**（固定基座）、**不做碰撞规划**                                                                                  | 砍最大坑                                                              |
-| Agent 结构          | 单 agent 循环，两段 prompt 分饰 actor / coordinator 两角，串行执行                                                                                     | 并行多设备调度不影响范式验证                                          |
-| Evolutionary search | 作为 stretch goal，退化为 K=2 候选锦标赛（1–2 轮）；**候选评估必须并行**（多进程各起一个 sim 实例，AGENTS.md 硬性要求）                                   | 核心闭环优先；但并行是论文核心机制，不可退化为串行                    |
-| Coding agent        | **K3（Claude Code 本机直接担任，不配外部 API）**——CaP-X 的替代品 = K3 + 完整 Primitive API 文档 + open_details few-shot 示例 | CaP-X 本质就是"按 API 文档写控制代码的 LLM"，K3 代码能力足够，差距用 prompt 工程补；CLI 自动化等无人值守阶段再说 |
-| 视觉证据            | **每一步都记录**【观测、输入、输出、视觉证据】（AGENTS.md 硬性要求）；存储上可压缩（低分辨率关键帧），但记录不可省略                                                 | 这是 coding agent 抓住失败关键的数据基础 |
-
-**已知限制**：MobileSAM 对**单调背景**（如纯色桌面+小物体）分割效果差（易把背景当 mask），需结合颜色过滤或近距离观察。真机迁移时需重新验证光照鲁棒性。
+| 项目 | 决策 | 理由 |
+|---|---|---|
+| 真机 | 松灵 PiPER（6 轴 + 夹爪），后期包同名 primitive API（底层走 piper_sdk） | 现有硬件 |
+| 仿真臂 | **松灵 PiPER**（[aspire/robots/](aspire/robots/)，松灵官方 MJCF 适配） | 与真机同本体，skill 物理参数免二次标定 |
+| 仿真框架 | robosuite（MuJoCo，自带 benchmark 与 `_check_success()`） | 环境/判定白送 |
+| 感知 | **SAM3 主力**（文本+点提示，本地权重进程隔离）+ **Molmo 兜底链**（论文对齐）；Contact-GraspNet 抓取规划（见 §3） | 与 ASPIRE 论文栈对齐 |
+| 运动 | **API 构建阶段内三步走**：DLS + 种子库（已建，兜底）→ **pyroki 服务**（Piper URDF）→ **cuRobo**（批量 IK + 碰撞轨迹），对比选默认 | 用户指定 4 必要组件之一，见 §3 |
+| 导航与碰撞 | **纳入范围**：碰撞反馈进 trace（论文组件 1 明示）+ 碰撞感知规划（API 构建阶段）；导航随长程任务（BEHAVIOR 风格）在 Phase 3 纳入 | 撤销初版简化 |
+| Agent 结构 | 单 agent 循环起步，两段 prompt 分饰 actor/coordinator；Phase 2 起按论文并行化 | 核心闭环优先 |
+| Coding agent | Claude Code 本机担任（与论文同构）；无人值守阶段再配 CLI 自动化 | — |
+| 视觉证据 | 每 primitive 记录【观测、输入、输出、视觉证据】（AGENTS.md 硬性要求）；存储可压缩，记录不可省 | trace 是 agent 诊断的数据基础 |
 
 ---
 
-## 3. 环境配置（新机器需重做）
+## 3. 组件覆盖现状与补全计划（用户指定的 4 个必要组件）
+
+> 用户决策（2026-07-28）：以下 4 项**全部属于当前 API 构建阶段（Phase 0）的范畴**，
+> 不延后——API 阶段完成 = 15 函数契约 + 4 组件全部集成并通过验收。
+> （原第 5 项 OWL-ViT+SAM2 已于 2026-07-28 移出：论文 0 提及，备用配置不再补全。）
+
+| # | 组件 | 现状 | 论文/cap-x 中的角色 | 补全方式（均在 Phase 0） |
+|---|---|---|---|---|
+| 1 | 碰撞 | ⚠️ 仅 IK 最终构型检查 | trace 的 collision feedback（组件 1）；碰撞感知规划 | 路径碰撞检查 + trace 碰撞字段 + cuRobo/pyroki 碰撞规划 |
+| 2 | Contact-GraspNet | ❌ 几何规划器替代 | cap-x `plan_grasp` 真身（server :8115） | CGN 服务（进程隔离，同 vision_server 模式），`plan_grasp` 后端切换 |
+| 3 | pyroki | ❌ DLS+种子库替代 | cap-x IK server（:8116），URDF 驱动 | pyroki 服务 + Piper URDF（用户提供），`solve_ik` 后端切换 |
+| 4 | cuRobo | ❌ | **cap-x 有完整集成**（`integrations/motion/curobo*.py` + `serving/launch_curobo_server.py`，libero 线默认注释） | 参考 cap-x 集成做 GPU 批量 IK + 碰撞轨迹；与 pyroki 对比选默认 |
+
+---
+
+## 4. 长期路线图
+
+> 里程碑门禁制：每个 Phase 的出口标准全部满足才进入下一个；时间盒为预估，不超时不强推。
+
+### Phase 0 — API 构建阶段（当前，含 4 必要组件）
+**目标**：`PiperControlApiReduced` 完整交付 = **15 函数 API 面**（cap-x reduced 10 +
+论文/open_details 补充 5，逐函数出处见
+[docs/api_asset_map.md](docs/api_asset_map.md)）+ 4 组件全部集成，Stack demo 跑通。
+- **运动与 IK 层**：运动可信化（响亮报错 + waypoint 插值 + FK 到位验证）→
+  pyroki 服务（Piper URDF）替换 `solve_ik` 后端 → cuRobo 批量 IK / 碰撞轨迹
+  （与 pyroki 对比选默认；安装与本机 torch 冲突时 timebox 半天，先用 pyroki 解锁下游）。
+- **感知层**：Contact-GraspNet 服务替换 `plan_grasp` 后端（checkpoint 下载先问用户）；
+  HSV 兜底 SAM3 漏检（demo 侧）。
+- **碰撞**：运动路径逐段碰撞检查；trace 记录碰撞事件（接触 geom 对/位置/时刻），
+  对齐论文组件 1 的 "collision feedback"。
+- **demo 闭环**：工作区收紧（离线可达性扫掠定 CUBE 范围）+ 抓取后验证/重试。
+- **收尾**：`PiperControlApiReduced` 类命名 + `docs/primitive_api_capx.md` 补全 + git 提交。
+- 详细交接：[handoff_piper_control_api.md](handoff_piper_control_api.md)（仓库根目录）。
+- **出口标准**：`test_piper_capx_api.py` 全 PASS（含新后端与碰撞字段的扩展用例）；
+  Stack seed 0 成功 + seed 1/2 ≥2/3；4 组件各自集成测试达标；
+  `docs/api_asset_map.md` 看板全部打勾；文档与实现一致。
+- 预估：3–4 周。
+
+### Phase 1 — Skill Library 闭环（论文组件 2）
+**目标**：debug→validate→入库→注入 全链路跑通，见到第一个真实 skill 入库并起效。
+- findings.md schema（failure mode / validated repair / transferable patterns / 验证成功率）；
+- coordinator 角色审计提炼 SKILL.md（附录 E.5 模板）；
+- 注入机制（初期全量注入，skill 数 >20 后做检索）；
+- 在 Stack + 1-2 个新任务（如 Lift、PickPlace 的 Piper 版）上验证"入库 skill 提升后续任务成功率"。
+- **种子素材（论文附录现成的 skill 原型，直接当格式标杆与首批内容）**：
+  - debugging 表：`plan_grasp` 返回空 → dilate mask、log `mask.sum()` 应 >200px；
+    `solve_ik` 返回 None → 目标 z 降 5cm、重查 x/y 可达性；
+    抓取成功但抬起掉落（夹爪半闭/细长物）→ 试垂直偏航 90° 或沿长轴逼近；
+  - `make_topdown_quat(yaw_deg)` 的 scipy 参考实现（xyzw→wxyz 重排）；
+  - localize / grasp 两个初始 SKILL.md 完整样例（论文附录 E.5 贴出全文，
+    含 frontmatter 与栏目格式）——首批入库条目按此格式蒸馏我们自己的实测经验
+    （如 §6.3 的 overhead 钩抓、x>0.45 不可达、min_z 抓取基准）。
+- **出口标准**：≥3 个 skill 入库；对照实验（有/无注入）成功率有统计意义差异。
+- 预估：3–4 周。
+
+### Phase 2 — 进化搜索（论文组件 3）
+**目标**：K≥4 候选程序锦标赛 + 多代进化，候选**并行评估**（多进程 sim 实例，AGENTS.md 硬性要求）。
+- 候选生成（温度/扰动采样）、并行评估 harness、基于 surviving programs + residual traces 的下一代条件化；
+- 与 Phase 1 联动：repaired program vs evo search 的 held-out 验证（论文 Aspire 列的评测方式）。
+- **出口标准**：在 ≥3 个任务上 evo search 候选超过单轨迹修复基线。
+- 预估：3–4 周。
+
+### Phase 3 — 长程任务与导航扩展
+**目标**：任务谱扩展到 BEHAVIOR 风格长程任务；导航纳入。
+- BEHAVIOR 风格多阶段任务（多点位巡访、开关容器等）；
+- 固定基座下导航以"任务级点位序列"形式纳入，真 mobile base 视硬件到位再议；
+- 依赖 Phase 0 的碰撞感知规划与 trace 碰撞反馈。
+- **出口标准**：≥1 个长程任务（≥5 阶段）跑通并入库对应 skills。
+- 预估：3–4 周。
+
+### Phase 4 — sim2real：Piper 真机
+**目标**：同名 primitive API 的真机实现，sim 积累的 skill library 上真机验证。
+- 真机适配层：API 签名不变，底层走 piper_sdk（IK/关节控制/夹爪）；
+- 相机标定（realsense/腕部）、SAM3/CGN 真机推理链路；
+- skill 迁移实验：sim 入库 skills 作为 in-context guidance，测真机编程 token 成本降幅（论文 1.4 范式）。
+- **出口标准**：真机完成 ≥1 个 sim 训练过的任务；skill 注入 vs 无注入对照。
+- 预估：4–6 周（硬件排期另计）。
+
+### 平行线（任意时刻可插入）
+- **cap-x 原生环境插件化**：若要复现 LIBERO-Pro/BEHAVIOR 榜单数字，把 cap-x envs 作为
+  另一种基底接入同一引擎接口（cap-x 当插件，不当宿主）。
+- **AGENTS.md/文档维护**：每 Phase 结束同步一次。
+
+---
+
+## 5. 简化清单（2026-07-28 修订）
+
+**仅保留一条**：
+
+1. **只做单臂任务**（双臂 handover / TwoArmLift 不碰；cap-x 的 bimanual API 分支不实现）。
+
+初版其余简化全部撤销：感知已对齐论文（SAM3 主力 + Molmo 兜底，非 MobileSAM）；
+导航与碰撞纳入范围（§4 Phase 0/3）；12h 时间盒作废（§4 长期路线图）；
+benchmark 不再"尽可能简单"（Phase 1 起逐步加任务）；primitive API 不做"难复现就略过"
+（§3 四组件全部补全，归属 Phase 0）。
+
+---
+
+## 6. 环境配置与踩坑记录（存档）
+
+### 6.1 环境
 
 ```bash
-# Python 3.13 太新，robosuite 兼容性差；环境已建好（2026-07-23）：conda env "aspire"，Python 3.10
-conda activate aspire
-/home/stouching/anaconda3/envs/aspire/bin/pip install mujoco robosuite
-
-# 无头服务器（无 DISPLAY）渲染验证：EGL 后端
-MUJOCO_GL=egl /home/stouching/anaconda3/envs/aspire/bin/python -c "
-import robosuite as suite
-env = suite.make('Lift', robots='Panda', has_renderer=False,
-                 use_camera_obs=True, camera_names='agentview')
-obs = env.reset()
-print('OK', sorted(obs.keys()))
-"
+# conda env: ASPIRE（大写，py3.12）；python 用绝对路径
+/home/stouching/anaconda3/envs/ASPIRE/bin/python script.py
+# 无头渲染：EGL 后端
+MUJOCO_GL=egl /home/stouching/anaconda3/envs/ASPIRE/bin/python ...
 ```
 
-注意：若 EGL 报错，检查 NVIDIA 驱动与 `libegl1`；备选 `MUJOCO_GL=osmesa`（需装 osmesa 库，速度慢）。
+mujoco 必须 3.3.*（新版 C API breaking change 与 robosuite 1.5.2 冲突）。
+CUDA 与 EGL 同进程冲突（实测 2026-07-28）：torch CUDA 初始化后同进程 EGL 渲染永久损坏
+→ SAM3 等 CUDA 推理一律进程隔离（vision_server 模式）。
 
-**已踩过的坑（2026-07-23）**：pip 默认装最新 mujoco（3.10.0），其 C API 有 breaking change，robosuite 1.5.2 初始化 OSC 控制器时报 `TypeError: mj_fullM(): incompatible function arguments`。**必须降级：`pip install "mujoco==3.3.*"`**（实装 3.3.7 验证通过）。
+### 6.2 模块 2 踩坑（2026-07-24，已固化在代码注释）
 
-**模块 2 踩坑记录（2026-07-24，Primitive API 实现）**——全部已在代码注释中固化：
+1. robosuite transform_utils 全套 xyzw，API 边界 wxyz → `_q_in`/`_q_out` 边界转换；
+2. `get_camera_segmentation` 多翻转一次 → 调用后再翻回；
+3. mujoco 相机系 y 向上 → 反投影 `y = -(v-cy)*z/fy`；
+4. `robot0_eef_quat` ≠ `_site` 版本，姿态闭环用 `_site`；
+5. 四元数 w 不归一化 → IK 在 π 附近振荡；姿态同伦绕 180° DLS 奇异；
+6. horizon 会被闭环吃满 → horizon=1000 + terminated 静默防御；
+7. 抓取基准用 min_z（p5）而非 top_z（可见面偏置 +1.3cm，易滑落）。
 
-1. **robosuite transform_utils 全套是 xyzw**（quat2mat/mat2quat/quat_slerp/quat2axisangle），与 API 文档对用户暴露的 wxyz 约定冲突 → `primitives.py` 中 `_q_in`/`_q_out` 做边界转换，模块内部统一 xyzw。
-2. **`get_camera_segmentation` 多翻转一次**：mujoco 3.x render 已返回 row0=top 正向图，obs 的 RGB/depth 未翻转，但 segmentation 函数按老 OpenGL 假设翻了 `[::-1]` → 调用后再翻回一次对齐。
-3. **mujoco 相机系 y 轴向上**（图像 v 向下）→ 反投影 `y = -(v-cy)*z/fy`，不处理会致 z 系统性偏高 ~4cm（抓取目标点全错）。
-4. **`robot0_eef_quat` ≠ `robot0_eef_quat_site`**（不同 frame），姿态闭环必须用 `_site` 版本。
-5. **四元数 w 符号不规范化（w≥0）→ IK 在 π 附近振荡**；另需姿态同伦（slerp 分步）绕开 180° DLS 奇异性。
-6. **horizon=300 会被 move_to_pose 闭环吃满**（单次最多 160 步）→ horizon=1000 + engine 对 terminated episode 静默防御。
-7. **抓取基准用 min_z（点云 p5）而非 top_z**：可见面偏置使 top_z 系统偏高 ~1.3cm，夹上部易滑落（seed1 失败案例，正是 ASPIRE skill 提炼的典型原料）。
+### 6.3 cap-x/Piper 线踩坑（2026-07-27/28，详见交接文档与代码注释）
 
----
-
-## 4. 12 小时计划分解
-
-| # | 模块                           | 内容                                                                                                               | 预估    |
-| - | ------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------- |
-| 0 | 环境安装                       | 上节命令 + EGL 渲染验证                                                                                            | 0.5–1h |
-| 1 | 仿真环境                       | robosuite hello-world：Lift 任务 + 脚本化策略验证抓取流程                                                          | 1–1.5h |
-| 2 | Primitive API                  | **先写完整 API 文档**（每个函数的签名/参数/返回值/副作用/使用示例，作为 coding agent 的 prompt 上下文）→ 实现：`get_observation`、**MobileSAM ONNX GPU 分割**、IK `move_to`、`grasp/lift/place`、每 primitive 的 trace 日志 | 3h      |
-| 3 | Agent harness                  | prompt 模板（含 API 文档）→ **K3（Claude Code 交互式）** 生成`task_code.py` → 子进程执行 → 收集 trace/成败 → 带 trace 重试           | 2h      |
-| 4 | Skill library                  | findings.md schema、coordinator 角色提炼成 SKILL.md、注入 prompt（初期全量注入，不做检索）                         | 1h      |
-| 5 | Evolutionary search（stretch） | K=2 候选、1–2 轮锦标赛选优；**候选并行评估**（多进程 sim 实例，robosuite 非线程安全须用进程）                                        | 1–1.5h |
-| 6 | 端到端联调                     | Lift 任务跑通 debug→validate→入库全流程 + 修坑                                                                   | 1.5–2h |
-
-**里程碑**：约 6–8h 时见到第一个 skill 入库（最小闭环 = robosuite Lift + MobileSAM 感知 + IK primitives + 单 agent 修复循环 + 1 个种子 SKILL.md + 成功率统计）。剩余时间加 PickPlace 任务和 evo search。
-
-**最大风险点**：
-
-- IK / 抓取鲁棒性（半天级坑都在这；缓解：primitives 里内置 top-down grasp + yaw fallback + argmax fallback）
-- LLM 生成代码的抽取与沙箱执行（缓解：强制输出单文件 ```python 块，子进程 + timeout 运行）
-- 物理仿真不确定性（缓解：固定 seed 集，debug seeds 与 validation seeds 分开，validation 只跑一次）
+1. robosuite XML 解析四坑：嵌套 default class / geom group 仅 0/1 / childclass 不支持 / mesh 前缀冲突；
+2. Piper 6 轴 + j5 ±70°：桌面高度严格顶朝下不可达 → 远侧 overhead 钩抓姿态族（倾角 ~25°）；
+3. 可达带：悬停高度基座系 x≈0.28–0.40，x>0.45 IK 不收敛；
+4. 位置伺服碰撞卡死后静默超时 = 静默失败（TCP 偏差实测 150–300mm）→ Phase 0 P0 修复；
+5. EGL offscreen 高频 wedge（512 双相机 → 降 256 + 运动拍不渲染 + L1/L2 自愈）；
+6. IK 长距离关节跳转扫碰撞 → 最终构型 collision_free 检查 + Phase 0 路径检查。
+7. pyroki 依赖死锁（jaxls→jax≥0.6→numpy 2.x vs 主环境 numpy 1.26）→ **环境隔离**：
+   服务住独立 venv，主环境零改动；禁止升级主环境全家桶解依赖冲突。
+8. 官方 URDF 与第三方 MJCF（yanyuze1 仓）几何一致（杆长模长精确相等）但**关节零位
+   约定不同**（同数值 FK 差 ~411mm）→ 零位映射标定 `q_mjcf = sign·q_urdf + offset`，
+   适配层常驻；`mj_saveLastXML` 不能导出 URDF。
+9. 相机位姿（2026-07-29 图像实锤）：robotview 只框方块工作区、臂整体出画
+   （"臂没动过"是出画假象）；eye_in_hand 朝 link6 +z 看进掌心网格（手指伸向 -z）
+   → A0.5 相机标定：改 pos/target + 渲染迭代验收。**教训：观测结构测试
+   （shape/dtype）查不出构图错误，相机验收必须看图。**
 
 ---
 
-## 5. 简化清单（已确认）
+## 7. 后续方向（超出当前路线图，仅记录）
 
-用户原定的两条：
-
-1. primitive API 中难复现的可简化或直接略过；
-2. benchmark 任务尽可能简单，框架能跑通即可（Lift 必做，PickPlace 可选，双臂 TwoArmHandover 第一阶段不碰）。
-
-追加的七条：
-3. 环境用 robosuite，不碰 raw MuJoCo XML；
-4. 只做单臂、1–2 个任务；
-5. 感知用 MobileSAM ONNX GPU（vit_t 编码器），保留 SAM3 风格 API 外形；
-6. 砍导航与碰撞规划（IK + 插值）；
-7. coordinator/subagent 不拆进程，单循环分饰两角；
-8. evolutionary search 放最后，退化为 2 候选锦标赛，**但候选评估必须并行（AGENTS.md 硬性要求）**；
-9. **执行引擎每一步记录【观测、输入、输出、视觉证据】（AGENTS.md 硬性要求）**，存储可压缩但记录不可省。
-
----
-
-## 6. 后续（超出 12h 范围，仅记录方向）
-
-- 加 PickPlace / 更多任务，观察 skill library 增长与 zero-shot 迁移；
-- 真 SAM3 + depth 点云替换 MobileSAM ONNX（已部署 GPU 版）；
-- 用松灵官方 `piper_mujoco` 模型建贴近真机的仿真环境做中间验证；
-- PiPER primitive 适配层带 sim 积累的 SKILL.md 上真机；
-- coordinator/subagent 并行化、多设备调度。
+- 多设备/多 worker 并行调度（论文 coordinator 并行 actor 架构）；
+- LIBERO-Pro Long zero-shot 迁移实验（论文 31% vs 4% 的招牌对照）；
+- skill library 跨本体迁移（Piper ↔ 其他臂，若未来引入）。

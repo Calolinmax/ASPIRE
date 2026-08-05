@@ -1,6 +1,12 @@
-# ASPIRE Primitive API 文档（复现版 v0.1）
+# ASPIRE Primitive API 文档（复现版 v0.3 · Panda 线存档）
 
-> **本文档是 Coding Agent（K3）生成任务代码的唯一 API 依据。**
+> ⚠️ **状态（2026-07-28）**：本文档对应**模块 2 的 Panda 线**（`aspire/engine.py` +
+> `aspire/primitives.py`，Lift 已验证，存档保留）。**当前 API 主线是 cap-x 契约 / Piper 线**：
+> `aspire/primitives_capx.py`（10 函数与 `FrankaControlApiReduced` 1:1），其权威文档为
+> `docs/primitive_api_capx.md`（随 Phase 0 收尾补全），交接见 `handoff_piper_control_api.md`（仓库根目录）。
+> 新任务代码一律以 cap-x 线文档为准，不要再以本文档为"唯一 API 依据"。
+
+> **本文档是 Coding Agent（K3）生成任务代码的唯一 API 依据（仅限 Panda 线任务）。**
 > 生成代码时**只能使用本文档列出的函数**，禁止臆造 API。
 > 所有函数由执行引擎注入全局命名空间，任务代码无需 import（`numpy` 除外，`np` 可用）。
 
@@ -16,7 +22,7 @@
 | 关节角 | `np.array`，shape `(7,)`（Panda 7 轴，不含夹爪），单位 rad |
 | 像素坐标 | `(u, v)`：u 列（x 向右），v 行（y 向下），原点左上 |
 | 图像 | `np.array`，RGB shape `(H, W, 3)` dtype `uint8`；depth shape `(H, W)` dtype `float32` 单位米 |
-| 相机 | 固定第三人称视角 `"agentview"`，分辨率 256×256 |
+| 相机 | 双相机：第三人称 `"agentview"` + 腕部 `"wrist"`（robot0_eye_in_hand），分辨率 256×256 |
 | 阻塞语义 | 所有运动类函数都是**阻塞的**：到达目标（或超时）后才返回 |
 | 夹爪 | 二指平行夹爪；`open_gripper()` / `close_gripper()` 阻塞至动作完成 |
 
@@ -38,9 +44,12 @@ QUAT_TOP_DOWN = np.array([0.0, 1.0, 0.0, 0.0])  # wxyz：绕 x 轴 180°
 
 ## 1. 感知类（Detection）
 
-### `get_observation() -> dict`
+### `get_observation(camera="agentview") -> dict`
 
-获取当前环境完整观测。**每次需要最新状态时调用**，不要缓存旧观测做决策。
+获取指定相机的完整观测。**每次需要最新状态时调用**，不要缓存旧观测做决策。
+
+**参数**：
+- `camera`：`str`，`"agentview"`（顶部第三人称）或 `"wrist"`（腕部 eye-in-hand），默认 `"agentview"`
 
 **返回**（常用键）：
 
@@ -50,39 +59,44 @@ QUAT_TOP_DOWN = np.array([0.0, 1.0, 0.0, 0.0])  # wxyz：绕 x 轴 180°
 | `"robot0_eef_quat"` | `(4,)` wxyz | 夹爪姿态 |
 | `"robot0_gripper_qpos"` | `(2,)` | 夹爪两指关节位置（大=张开） |
 | `"robot0_joint_pos"` | `(7,)` | 机械臂关节角 |
-| `"agentview_image"` | `(H,W,3)` uint8 | RGB 图像 |
-| `"agentview_depth"` | `(H,W)` float32 | 深度图（米制） |
-| `"camera_intrinsics"` | `(3,3)` | 相机内参 K |
-| `"camera_extrinsics"` | `(4,4)` | 相机外参 E（cam→world 的 4x4 齐次矩阵） |
-| `"object-state"` | `(k,)` | 所有物体的 GT 状态拼接（任务相关） |
+| `"{camera}_image"` | `(H,W,3)` uint8 | 当前相机的 RGB 图像 |
+| `"{camera}_depth"` | `(H,W)` float32 | 当前相机的深度图（米制） |
+| `"camera_intrinsics"` | `(3,3)` | 当前相机内参 K |
+| `"camera_extrinsics"` | `(4,4)` | 当前相机外参 E（cam→world 的 4x4 齐次矩阵） |
+| `"active_camera"` | `str` | 当前请求的相机名（`"agentview"` 或 `"wrist"`） |
 
-> 注：原始 robosuite 观测键（如 `cube_pos`）也可直接访问，但**任务代码应优先走感知 API**，保持与真机一致的风格。
+> **双相机用法**：先用 `agentview` 做全局定位，在预抓位附近切 `wrist`（腕部相机）近距离精化。切换时重新调用 `get_observation("wrist")`，内参/外参/图像会随之更新。
 
 ---
 
 ### `segment_sam3_text_prompt(rgb, prompt) -> list[dict]`
 
-文本提示分割（**GT 冒充版**：内部直接查 sim 对象状态生成 mask，语义层是 ground truth）。
+文本提示分割（**SAM3 GPU 真实推理**：transformers 本地权重，开放词汇概念分割，返回所有匹配实例的 mask）。
 
 **参数**：
-- `rgb`：`np.array (H,W,3)`，通常传 `obs["agentview_image"]`
-- `prompt`：`str`，物体描述。**GT 版按子串匹配对象名**（如 `"cube"` 匹配名为 cube 的对象；颜色词如 `"red cube"` 也可匹配——仿真内对象名含颜色信息时有效）
+- `rgb`：`np.array (H,W,3)`，通常传 `obs["agentview_image"]` 或 `obs["wrist_image"]`
+- `prompt`：`str`，物体描述（英文）。SAM3 原生理解开放词汇，如 `"red cube"`、`"green block"`、`"mug"` 等。由于仿真纹理简单（纯色方块），推荐直接使用颜色+类别组合（如 `"red cube"`）
 
 **返回**：`list[dict]`，按置信度降序，每个元素：
 ```python
 {
-    "mask": np.array (H,W) uint8,   # 0/1 二值掩码
-    "score": float,                  # 置信度（GT 版恒为 0.99）
+    "mask": np.array (H,W) uint8,    # 0/255 二值掩码
+    "score": float,                   # SAM3 置信度 (0~1)
+    "area": int,                      # mask 面积（像素数）
+    "centroid": (float, float),       # 质心 (x, y)
+    "aspect_ratio": float,            # 宽高比
 }
 ```
 未匹配到任何对象时返回 **`[]`（空列表）**。任务代码**必须处理空列表**（换 prompt 重试或抛异常）。
 
+> **实现细节**：内部调用 `Sam3Model.from_pretrained`（848M 参数，GPU CUDA 推理），处理器配置 `threshold=0.5`。首次调用触发模型加载（~3s），后续调用复用。文本 prompt 不区分大小写，SAM3 会自动匹配语义相近的概念。
+
 **示例**：
 ```python
 obs = get_observation()
-masks = segment_sam3_text_prompt(obs["agentview_image"], "cube")
+masks = segment_sam3_text_prompt(obs["agentview_image"], "red cube")
 if not masks:
-    raise RuntimeError("cannot find cube")
+    raise RuntimeError("cannot find red cube")
 mask = masks[0]["mask"]
 ```
 
@@ -90,20 +104,24 @@ mask = masks[0]["mask"]
 
 ### `segment_sam3_point_prompt(rgb, point) -> list[dict]`
 
-点提示分割。返回包含该像素的物体 mask（GT 版：查该像素命中的对象）。
+点提示分割（**Sam3Tracker GPU 真实推理**：SAM2 式交互分割，给定前景点，返回该实例的多个候选 mask）。
 
-**参数**：`point`：`(u, v)` 像素坐标（float 或 int）
+**参数**：`point`：`(x, y)` 像素坐标（float 或 int），前景点（要点在目标物体上）
 
-**返回**：同 `segment_sam3_text_prompt` 的 list 结构；未命中返回 `[]`。
+**返回**：同 `segment_sam3_text_prompt` 的 list 结构（多个候选 mask，按质量分降序）；未命中返回 `[]`。
+
+> **实现细节**：内部调用 `Sam3TrackerModel`（SAM2 的 SAM3 替代版），输入标为前景点（label=1）。`iou_scores` 可用时按质量分排序，否则按输出顺序赋分。
 
 ---
 
 ### `point_prompt_molmo(rgb, prompt) -> dict`
 
-文本提示关键点定位（GT 版：返回匹配对象的投影中心像素）。
+文本→关键点定位。内部调用 `segment_sam3_text_prompt`，取置信度最高的 mask，返回其质心坐标。常用于文本定位→点提示的级联管道。
 
-**返回**：`dict`，如 `{"point_0": (u, v)}`；未匹配返回 `{}`。
+**返回**：`dict`，如 `{"point_0": (x, y)}`；未匹配返回 `{}`。
 取值方式：`uv = list(result.values())[0]`，`uv` 可能为 `(None, None)`，需判空。
+
+> **注意**：函数名含 "molmo" 是接口历史命名，实际不调用 Molmo 模型，直接走 SAM3 文本分割。
 
 ---
 
@@ -266,4 +284,4 @@ quat = rotation_matrix_to_quaternion(R)
 
 ---
 
-*v0.1 — 2026-07-24：第一阶段（Lift/PickPlace）。感知为 GT 冒充版，语义层 ground truth、几何层真实渲染（depth + 相机模型）。*
+*v0.3 — 2026-07-27：感知升级为 SAM3（transformers 本地权重，GPU 推理），开放词汇文本提示 + 点提示交互分割。双相机架构（agentview + wrist）。几何层为真实渲染（depth + 相机模型）。*

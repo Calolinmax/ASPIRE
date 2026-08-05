@@ -8,7 +8,8 @@
          ├── link7      : 手指1 (slide joint7, 0=闭合 0.035=张开, equality 镜像 link8)
          └── link8      : 手指2 (slide joint8, 由 equality 驱动)
        指尖几何 (原模型实测): 合拢时两指垫接触面位于 root 系 z=-0.045 平面,
-       手指沿 ±y 开合, 全开张嘴内净距约 45mm -->
+       手指沿 ±y 开合, 全开张嘴内净距 70mm (=2·joint7 行程; 2026-08-04 修正,
+       旧值 45mm 系把指垫局部 y 半尺寸 15mm 误当开合轴半厚度 2.5mm) -->
   <compiler angle="radian"/>
 
   <asset>
@@ -60,7 +61,10 @@
   </worldbody>
 
   <actuator>
-    <position name="gripper" joint="joint7" kp="40" kv="5" forcerange="-10 10"
+    <!-- 夹持力增强（2026-08-04 用户批准）: kp 40→120, 全闭夹持力 ~1.15N→~3.5N。
+         背景: kp=40 时悬停段方块滑移 ~2cm（1.1mm 之差判滑落, seed 0 实测）;
+         forcerange ±10N 不饱和（120×0.035=4.2N） -->
+    <position name="gripper" joint="joint7" kp="120" kv="5" forcerange="-10 10"
       ctrllimited="true" ctrlrange="0 0.035"/>
   </actuator>
 

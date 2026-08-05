@@ -1,7 +1,7 @@
-"""ASPIRE Primitive API 实现（复现版 v0.2 - 双相机+MobileSAM视觉）。
+"""ASPIRE Primitive API 实现（复现版 v0.3 - 双相机+SAM3视觉）。
 
 对应 docs/primitive_api.md 的契约。所有函数由 ExecutionEngine 注入任务代码
-的全局命名空间。感知为 MobileSAM（vit_t）GPU 分割。
+的全局命名空间。感知为 SAM3（848M）GPU 分割，原生开放词汇文本提示。
 """
 
 from __future__ import annotations
@@ -14,8 +14,11 @@ import numpy as np
 from robosuite.utils import camera_utils as CU
 from robosuite.utils import transform_utils as T
 
-# 导入视觉模块（ONNX GPU版MobileSAM）
-from .vision_sam_onnx import segment_sam3_text_prompt, segment_sam3_point_prompt, warmup
+# 导入视觉模块（SAM3，transformers 本地权重，GPU）
+from .vision_sam3 import segment_sam3_text_prompt, segment_sam3_point_prompt, warmup
+
+# 视觉证据标注（定位算法输出画回输入帧，随 trace 落盘）
+from .annotate import build_annotation
 
 # ---------------------------------------------------------------------------
 # 常量
@@ -36,29 +39,6 @@ POS_TOL = 0.005          # 5mm
 ROT_TOL = 0.07           # ~4°
 MAX_STEPS_MOVE = 160     # 8s @ 20Hz
 GRIPPER_SETTLE_STEPS = 12
-
-# prompt 匹配时剔除的颜色词（GT 版对象名无颜色信息）
-COLOR_WORDS = {
-    "red", "green", "blue", "brown", "white", "black", "yellow",
-    "orange", "purple", "pink", "gray", "grey", "cyan",
-}
-# 匹配时剔除的非对象词（提示中常见的上下文词）
-STOP_WORDS = {"on", "the", "a", "an", "of", "in", "at", "table", "small", "large", "object"}
-
-
-def _norm_name(name: str) -> str:
-    """规范化 body 名用于匹配：小写、去常见后缀。"""
-    n = name.lower()
-    for suf in ("_main", "_0", "_1"):
-        if n.endswith(suf):
-            n = n[: -len(suf)]
-    return n
-
-
-def _prompt_keywords(prompt: str) -> list[str]:
-    words = prompt.lower().replace("_", " ").replace("-", " ").split()
-    return [w for w in words if w not in COLOR_WORDS and w not in STOP_WORDS]
-
 
 # ---------------------------------------------------------------------------
 # 四元数约定处理（重要！）
@@ -117,62 +97,8 @@ class PrimitiveContext:
         """原生 mujoco.MjModel"""
         return self.sim.model._model
 
-    def _real_depth(self) -> np.ndarray:
-        d = self.engine.obs["agentview_depth"]
-        if d.ndim == 3:
-            d = d.squeeze(-1)
-        return CU.get_real_depth_map(self.sim, d)
-
-    def _camera_matrices(self):
-        K = CU.get_camera_intrinsic_matrix(self.sim, CAMERA_NAME, IMG_H, IMG_W)
-        E = CU.get_camera_extrinsic_matrix(self.sim, CAMERA_NAME)  # cam→world
-        return K, E
-
-    def _segmentation(self) -> np.ndarray:
-        """返回 (H, W, 2)：channel0=geom type, channel1=geom id。
-
-        坐标系对齐说明（已实测）：mujoco 3.x 的 render 已返回 row0=top 的正向图，
-        robosuite 的 obs（RGB/depth）直接使用该原始输出；但
-        CU.get_camera_segmentation 内部按老 OpenGL 假设多翻了一次 [::-1]，
-        与 obs 坐标系相反。此处再翻回一次，使 mask 与 obs depth/RGB 逐像素对齐。
-        """
-        return CU.get_camera_segmentation(self.sim, CAMERA_NAME, IMG_H, IMG_W)[::-1]
-
-    def _task_object_bodies(self) -> dict[str, int]:
-        """任务对象 body 名 → body id（排除机器人/桌面/安装座）。"""
-        skip_prefix = ("robot0", "gripper0", "fixed_mount", "world", "table")
-        skip_exact = {"left_eef_target", "right_eef_target"}
-        out = {}
-        for bid, name in enumerate(self.sim.model.body_names):
-            if not name or name in skip_exact or name.startswith(skip_prefix):
-                continue
-            out[name] = bid
-        return out
-
-    def _body_geom_ids(self, body_id: int) -> set[int]:
-        geom_bodyid = self.model.geom_bodyid
-        return {int(g) for g in range(self.model.ngeom) if int(geom_bodyid[g]) == body_id}
-
-    def _match_object(self, prompt: str) -> str | None:
-        """prompt → body 名（全部关键词均为 body 名子串）。返回 None 表示未匹配。"""
-        kws = _prompt_keywords(prompt)
-        if not kws:
-            return None
-        for name in self._task_object_bodies():
-            norm = _norm_name(name)
-            if all(kw in norm for kw in kws):
-                return name
-        return None
-
-    def _mask_for_body(self, body_name: str) -> np.ndarray:
-        seg = self._segmentation()
-        geom_ids = self._body_geom_ids(self._task_object_bodies()[body_name])
-        gid_channel = seg[:, :, 1].astype(int)
-        mask = np.isin(gid_channel, list(geom_ids))
-        return mask.astype(np.uint8)
-
     # ------------------------------------------------------------------
-    # 1. 感知类（双相机 + OpenCV 真实视觉）
+    # 1. 感知类（双相机 + SAM3 GPU 真实视觉）
     # ------------------------------------------------------------------
     def get_observation(self, camera: str = "agentview") -> dict:
         """
@@ -206,6 +132,15 @@ class PrimitiveContext:
                 width=CAMERAS[camera]["w"],
                 depth=True
             )
+            # EGL context wedge 时动态渲染也会返回垃圾帧：重建后重渲一次
+            if self.engine._img_corrupt(img):
+                self.engine.recover_renderer()
+                img, depth = self.engine.env.sim.render(
+                    camera_name=CAMERAS[camera]["name"],
+                    height=CAMERAS[camera]["h"],
+                    width=CAMERAS[camera]["w"],
+                    depth=True
+                )
             obs[img_key] = img
             obs[depth_key] = depth
 
@@ -214,6 +149,9 @@ class PrimitiveContext:
             d = obs[depth_key]
             if d.ndim == 3:
                 d = d.squeeze(-1)
+            # GL 深度按定义在 [0,1]，但 float32 回读偶有数值噪声越界（含 NaN），
+            # robosuite 的 get_real_depth_map 断言过严会直接崩；先归一化再转换。
+            d = np.clip(np.nan_to_num(np.asarray(d, dtype=np.float64), nan=1.0), 0.0, 1.0)
             obs[depth_key] = CU.get_real_depth_map(self.sim, d)
 
         # 相机参数
@@ -229,11 +167,11 @@ class PrimitiveContext:
         return obs
 
     def segment_text(self, rgb, prompt) -> list[dict]:
-        """文本提示分割（MobileSAM GPU，模块顶部已导入 vision_sam_gpu）。"""
+        """文本提示分割（SAM3 GPU，原生开放词汇，不再需要颜色 hack）。"""
         return segment_sam3_text_prompt(rgb, prompt)
 
     def segment_point(self, rgb, point) -> list[dict]:
-        """点提示分割（MobileSAM GPU）"""
+        """点提示分割（SAM3 Tracker GPU）"""
         return segment_sam3_point_prompt(rgb, point)
 
     # 兼容旧API
@@ -417,35 +355,56 @@ def _obs_key_states(obs: dict) -> dict:
     return {k: obs[k] for k in keys if k in obs}
 
 
+# get_observation 输出中的图像/深度键 → 帧流别名（不在帧流的键保留统计摘要）
+_OBS_STREAM_KEYS = {
+    "agentview_image": "top",
+    "agentview_depth": "depth",
+    "wrist_image": "wrist",
+    "robot0_eye_in_hand_image": "wrist",
+}
+
+
+def _obs_outputs_with_links(out: Any, sim_step: int, tracer) -> Any:
+    """get_observation 返回的图像/深度替换为帧流链接（JSON 只留指针）。"""
+    if not isinstance(out, dict):
+        return out
+    links = tracer.frame_links(sim_step)
+    patched = dict(out)
+    for key, stream in _OBS_STREAM_KEYS.items():
+        if key in patched:
+            patched[key] = {"ref": links[stream]}
+    return patched
+
+
 def build_namespace(engine) -> dict:
     """构建注入任务代码的全局命名空间（含 trace 包装）。"""
     ctx = PrimitiveContext(engine)
     tracer = engine.tracer
     ns: dict[str, Any] = {"np": np}
 
-    def wrap(name, fn, after_image: bool = False):
+    def wrap(name, fn):
         def wrapped(*args, **kwargs):
             step_before = engine.sim_step
-            img_before = engine.current_rgb()
+            engine.capture_boundary(step_before)        # 调用前帧入帧流（按步去重）
             out = fn(*args, **kwargs)
-            img_after = engine.current_rgb() if after_image else None
-            if tracer is not None:
-                tracer.record(
-                    name=name,
-                    inputs={"args": list(args), "kwargs": kwargs},
-                    outputs=out,
-                    observation=_obs_key_states(engine.obs),
-                    image_before=img_before,
-                    sim_step_before=step_before,
-                    sim_step_after=engine.sim_step,
-                    image_after=img_after,
-                )
+            engine.capture_boundary(engine.sim_step)    # 调用后帧（运动类即结束帧）
+            annot = build_annotation(name, args, out)
+            outputs = (_obs_outputs_with_links(out, step_before, tracer)
+                       if name == "get_observation" else out)
+            tracer.record(
+                name=name,
+                inputs={"args": list(args), "kwargs": kwargs},
+                outputs=outputs,
+                observation=_obs_key_states(engine.obs),
+                sim_step_before=step_before,
+                sim_step_after=engine.sim_step,
+                annotation=annot,
+            )
             return out
 
         wrapped.__name__ = name
         return wrapped
 
-    motion = {"move_to_pose", "move_to_joints", "open_gripper", "close_gripper"}
     api = {
         "get_observation": ctx.get_observation,
         "segment_sam3_text_prompt": ctx.segment_sam3_text_prompt,
@@ -463,5 +422,5 @@ def build_namespace(engine) -> dict:
         "rotation_matrix_to_quaternion": ctx.rotation_matrix_to_quaternion,
     }
     for name, fn in api.items():
-        ns[name] = wrap(name, fn, after_image=(name in motion))
+        ns[name] = wrap(name, fn)
     return ns
