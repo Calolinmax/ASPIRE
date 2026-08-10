@@ -42,7 +42,7 @@ Contact-GraspNet 做 6-DoF 抓取位姿估计，pyroki 做 IK，RRT-Connect 做�
 | 路径 | 说明 |
 |---|---|
 | `aspire/` | 核心包，按层分目录：`engine/`（执行引擎）`api/`（Primitive API）`evidence/`（trace+标注）`planning/`（RRT+pyroki 客户端）`perception/`（SAM3/CGN 服务）`envs/`（场景）`robots/`（Piper 模型资产） |
-| `scripts/` | 任务层（统一 sh 入口）：`stack.sh`/`wipe.sh` 一键可视化 + `tasks/`（任务代码）`tests/`（自检）`tools/`（资产生产线/查看器/常驻服务）`archive/`（历史诊断） |
+| `scripts/` | 任务层（统一 sh 入口，**规范见 [scripts/README.md](scripts/README.md)**）：`stack.sh`/`wipe.sh` 一键可视化 + `tasks/`（任务代码）`tests/`（自检）`tools/`（资产生产线/查看器/常驻服务）`archive/`（历史诊断） |
 | `docs/` | 设计与运维文档（API 契约、CGN 容器、SAM3、文件地图、路线图） |
 | `docker/cgn/` | CGN 容器构建资产存档（Dockerfile + 服务脚本 + 官方代码补丁），重建步骤见 [docs/env_rebuild.md](docs/env_rebuild.md) |
 | `open_details/` | ASPIRE 官方公布的任务代码 3 份 + skill 样例（复现基准） |
@@ -53,6 +53,8 @@ Contact-GraspNet 做 6-DoF 抓取位姿估计，pyroki 做 IK，RRT-Connect 做�
 
 `.gitignore` 已排除：`SAM3/`、`external/`、`outputs/`、`traces/`、`.env`、`__pycache__/` 等
 本地产物——**环境与大文件不进仓库，按下文重建**。
+（每个文件夹配有自己的 README.md 导引；全局逐文件详表见
+[docs/project_files.md](docs/project_files.md)。）
 
 ## 3. 环境要求
 

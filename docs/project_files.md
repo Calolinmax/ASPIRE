@@ -7,6 +7,7 @@
 > 图例：🔒 = 封版冻结（`chmod a-w` 机械保护，解冻仅人类亲自 `chmod +w`，
 > 覆盖引擎/API/证据/规划/**感知服务/机器人资产**各层——后两层 2026-08-07 用户指令加锁）;
 > 🔏 = 注释条款锁定（相机位姿/home 位姿/场景约束/CGN glyph 等，仅用户可改）。
+> **每个文件夹都有自己的 README.md 导引**（2026-08-10 补齐）；本文档是全局详表。
 
 ---
 
@@ -134,6 +135,8 @@ aspire/
 
 ## 4. `scripts/`（任务层，统一 .sh 入口标准，2026-08-07 重组）
 
+> **规范文档：[../scripts/README.md](../scripts/README.md)**——任务层格式标准、
+> 新任务编写指南（任务代码规则/场景/启动器模板/验证流程）、服务依赖与常见坑。
 > **任务层格式标准（用户指令）**：每个任务 = `scripts/tasks/<task>.py`（引擎注入的
 > 任务代码，禁止 import，只用契约 15 函数+契约外+np）+ `scripts/<task>.sh`
 > （一键启动器：preflight 服务检查 → exec 引擎 `--render`）。
@@ -148,6 +151,7 @@ aspire/
 
 | 文件 | 说明 |
 |---|---|
+| `README.md` | **任务层规范**（2026-08-10 定稿）：格式标准 + 新任务编写指南 + 服务依赖 + 常见坑。新任务先读它。 |
 | `stack.sh`（55 行） | Stack 可视化一键入口：`scripts/stack.sh [seed] [slowdown]`（seed 默认 $RANDOM，slow 默认 0.5=2 倍速）。预检 CGN :8117（须 model_loaded:true）+ pyroki :8116（任何 HTTP 应答即算活）；exec `python -m aspire.engine.engine_capx --code scripts/tasks/stack.py --task Stack --official-stack --render`。 |
 | `wipe.sh`（45 行） | Wipe 可视化一键入口（镜像 stack.sh）：**预检只查 pyroki**（无抓取规划故 CGN 不需要）；`--code scripts/tasks/wipe.py --task PiperWipeSpill`。 |
 
