@@ -82,7 +82,7 @@ aspire/
 | 文件 | 说明 |
 |---|---|
 | `primitives_capx.py` 🔒（1364 行） | **API 层本体**：`PiperControlApiReduced`——cap-x 契约 15 函数（感知 4/几何抓取 3/运动 2/控制 2/工具 4）+ 契约外 5 个（grasp_cgn/move_to_joints_planned/execute_legs_rrt/set_gripper_ramp/draw_grasp_glyphs）。后端开关类常量 `IK_BACKEND="pyroki"`/`GRASP_BACKEND="cgn"`。内含 solve_ik 兜底链（pyroki→DLS+IK 库近邻种子→滚转扫描）、`cgn_to_gripper` 变换链（🔏 CGN 输出约定 0.1034 冻结）、`_plan_grasp_geometric`（CGN 空候选回落）、碰撞事件收集。测试 33/33。 |
-| `primitives.py`（426 行） | **存档（Panda 旧线）**：`PrimitiveContext` 14 个 API（OSC 闭环 move_to_pose、手写 DLS solve_ik 姿态同伦绕 π 奇异性等），旧线任务代码 `scripts/tests/demo_stack_taskcode.py` 由它注入。注意它**进程内** import vision_sam3（torch/CUDA 与 EGL 同进程），与 cap-x 线的进程隔离路线是两条视觉路径的分叉点。 |
+| `primitives.py`（426 行） | **存档（Panda 旧线）**：`PrimitiveContext` 14 个 API（OSC 闭环 move_to_pose、手写 DLS solve_ik 姿态同伦绕 π 奇异性等）。注意它**进程内** import vision_sam3（torch/CUDA 与 EGL 同进程），与 cap-x 线的进程隔离路线是两条视觉路径的分叉点。（旧线验收 harness demo_stack_dualcam/taskcode 已于 2026-08-10 删除，git 历史可查。） |
 
 ### `evidence/`（证据层 🔒）
 
@@ -137,8 +137,12 @@ aspire/
 > **任务层格式标准（用户指令）**：每个任务 = `scripts/tasks/<task>.py`（引擎注入的
 > 任务代码，禁止 import，只用契约 15 函数+契约外+np）+ `scripts/<task>.sh`
 > （一键启动器：preflight 服务检查 → exec 引擎 `--render`）。
-> 分组：**tasks 2 / tests 4 / tools 8 / archive 21**（历史诊断=一次性攻坚产物，
+> 分组：**tasks 2 / tests 1 / tools 8 / archive 17**（历史诊断=一次性攻坚产物，
 > 结论已落进文档/记忆，删前请先读文件头结论）。
+> 2026-08-10 用户批准精简 7 个（git 历史可恢复）：test_piper_build.py（被 33 项覆盖）、
+> demo_stack_dualcam.py + demo_stack_taskcode.py（Panda 旧线验收资产）、
+> cgn_repro_gather_point / cgn_repro_pointnet_msg / cgn_repro_wrapper_synthetic
+> （CUDA 崩溃最小复现，容器化结论已固化）、calc_cam_rot.py（一次性计算稿）。
 
 ### 根目录：任务入口（统一 .sh）
 
@@ -159,9 +163,6 @@ aspire/
 | 文件 | 说明 |
 |---|---|
 | `test_piper_capx_api.py`（258 行） | **契约 15 函数全量自检，33 项**（A 观测结构 6 / B SAM3 2 / C 反投影标定 2 / D plan_grasp 3 / E 点提示 2 / F OBB 1 / G 运动 3 / H 夹爪 2 / I 类结构 4 / J 工具 5 / K select_top_down 3），全过 exit 0。GT 仅测试可用；C 区注释载"GT 尺寸从 model.geom_size 读勿硬编码"教训。 |
-| `test_piper_build.py`（106 行） | Piper robosuite 集成冒烟（命名检查/夹爪开合/双相机渲染存图）。早期 bring-up，功能已被 33 项契约测试覆盖，仍可直接跑。 |
-| `demo_stack_dualcam.py`（139 行） | **旧线（Panda 14-API）验收 harness**：跑 demo_stack_taskcode.py 并统计 14 个 API 调用覆盖率（检测/规划/抓取/控制四类报告）。 |
-| `demo_stack_taskcode.py`（355 行） | 旧线任务代码资产：双相机 SAM3 引导 Stack（世界系约定），改编自官方 cube_reset。cap-x 线已接棒，保留作 14-API 覆盖验证载体。 |
 
 ### `tools/`（资产生产线 / 查看器 / 常驻服务）
 
@@ -183,14 +184,12 @@ aspire/
 | `calibrate_pyroki_tcp.py` | pyroki 接入标定：FK(link6) vs grip_site 偏差 <1mm → TCP_OFFSET=0 可用。 |
 | `calibrate_urdf_mjcf_map.py` | URDF↔MJCF 关节映射拟合（杆长一致，偏差来自零位/轴系约定）→ 产物 pyroki_joint_map.json（joint3 不可信）。 |
 | `verify_mjcf_urdf_fk.py` | MJCF 派生 URDF 的 FK 一致性验收（URDF 已定型）。 |
-| `calc_cam_rot.py` | 相机绕光轴旋转 quat 的一次性计算稿（相机已锁死🔏）。 |
+| `calc_cam_rot.py` | ~~相机绕光轴旋转 quat 的一次性计算稿~~（2026-08-10 已删，git 历史可查）。 |
 | `check_cameras.py` | A0.5 相机标定肉审（home/预抓/抓取三位形渲染）。 |
 | `measure_sidecam_tilts.py` | 裁决 4a 数据：真实 tilt 分布 vs ik_library 支持度。 |
 | `measure_true_tilts.py` | 裁决 2/3 数据：全候选 tilt 分桶 + 库陡降构型甜点区实测。 |
 | `cgn_probe_clutter.py` | CGN 探针：干净单方块=双重 OOD 0 候选，加杂物后分数过线（Stack 默认 clutter=4 的由来）。 |
-| `cgn_repro_gather_point.py` | pointnet2 GatherPoint CUDA illegal address 最小复现（CGN 容器化的论据）。 |
-| `cgn_repro_pointnet_msg.py` | PointNet++ MSG 三层下采样崩溃定位（layer2 npoint=512）。 |
-| `cgn_repro_wrapper_synthetic.py` | CGN wrapper 合成深度图复现 illegal address（宿主机/容器双环境）。 |
+| `cgn_repro_gather_point.py` / `cgn_repro_pointnet_msg.py` / `cgn_repro_wrapper_synthetic.py` | ~~CUDA illegal address 最小复现三件套~~（2026-08-10 已删，git 历史可查；结论=CGN 必须容器化）。 |
 | `cgn_verify_steps.py` | CGN 坐标变换链分段可视化（相机系→基座系→TCP 三步 D2/D3 判据）。 |
 | `arbitrate_ik.py` | IK 裁决实验：独立多起点 DLS 直接回答"IK 有 bug 还是运动学墙属实"。 |
 | `verify_ik_convergence.py` | A1/A2 验收：pyroki vs DLS 工作区网格收敛对比（pyroki 胜出任默认后端）。 |

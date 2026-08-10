@@ -106,11 +106,10 @@ python3.12 -m venv ~/venvs/pyroki
 
 | 顺序 | 命令 | 通过标准 |
 |---|---|---|
-| 1 | `python scripts/tests/test_piper_build.py` | 场景构建无异常 |
-| 2 | `python scripts/tests/test_piper_capx_api.py` | 33/33 PASS |
-| 3 | 启动 pyroki 服务 | :8116 响应 IK 请求 |
-| 4 | 启动 CGN 容器后 `curl localhost:8117/health` | 返回 JSON |
-| 5 | `scripts/stack.sh` | 任务跑通（可视化） |
+| 1 | `python scripts/tests/test_piper_capx_api.py` | 33/33 PASS |
+| 2 | 启动 pyroki 服务 | :8116 响应 IK 请求 |
+| 3 | 启动 CGN 容器后 `curl localhost:8117/health` | 返回 JSON |
+| 4 | `scripts/stack.sh` | 任务跑通（可视化） |
 
 ## 8. 已知坑速查
 

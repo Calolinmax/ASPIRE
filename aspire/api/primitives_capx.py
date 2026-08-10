@@ -663,7 +663,7 @@ class PiperControlApiReduced:
         """
         # 1) 优先 CGN
         try:
-            from .vision_client import grasp_cgn
+            from ..perception.vision_client import grasp_cgn
 
             grasps_cam, scores = grasp_cgn(depth, intrinsics, segmentation)
             if len(grasps_cam) > 0:
@@ -869,7 +869,7 @@ class PiperControlApiReduced:
         # ------------------------------------------------------------------
         if use_pyroki:
             try:
-                from .pyroki_client import ik_pyroki
+                from ..planning.pyroki_client import ik_pyroki
                 q_pk = ik_pyroki(target_p_base, _q_in(quaternion_wxyz), prev_cfg=self.engine.current_arm_qpos())
                 q_pk = np.asarray(q_pk, dtype=np.float64).reshape(-1)
                 if q_pk.size >= 6:

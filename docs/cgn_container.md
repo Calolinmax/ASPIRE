@@ -53,7 +53,8 @@ sudo docker run --rm --gpus all \
 
 ## 3. 关键修复：default-stream 竞态（已修复，勿回退）
 
-宿主机时代 `scripts/cgn_repro_wrapper_synthetic.py` 报非确定性
+宿主机时代 `scripts/archive/cgn_repro_wrapper_synthetic.py`（2026-08-10 精简删除,
+git 历史可查）报非确定性
 `CUDA_ERROR_ILLEGAL_ADDRESS`（两次运行一崩一过、崩溃点漂移、sanitizer 下消失）。
 NGC 容器内同症状复现 → 排除工具链，定性为代码 bug。
 
