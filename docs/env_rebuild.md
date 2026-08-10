@@ -6,17 +6,19 @@
 
 ---
 
-## 0. 从旧机器带走的东西（离开前必做！）
+## 0. 从旧机器带走的东西（可选但推荐）
 
-| 物品 | 大小 | 必要性 | 说明 |
+代码、文档、CGN 全部构建资产（含本地补丁）都在 GitHub 私有库 `Calolinmax/ASPIRE`。
+其余资产的**官方来源均已记录在案**（本文件、[../docker/cgn/README.md](../docker/cgn/README.md)、
+README §4），可重新下载；但建议离线带走以下物品，省去下载/授权麻烦，也防官方链接变动：
+
+| 物品 | 大小 | 官方来源（可重下） | 建议 |
 |---|---|---|---|
-| `external/` 整目录 | 8.5G | ⭐ 必需 | CGN 权重 + 官方克隆 + 离线 deb 包。官方模型来自 Google Drive，**链接可能失效，务必离线带走** |
-| CGN docker 镜像 | ~10G 级 | ⭐ 强烈推荐 | `sudo docker save cgn-tf:25.02 \| gzip > cgn-tf-25.02.tar.gz`——免去 NGC 拉镜像 + 容器内编译 pointnet2（历史痛点） |
-| `SAM3/` 权重 | 6.5G | 推荐 | 可从 HuggingFace 重下（gated 要授权），直接带走更省事 |
-| `traces/` `outputs/` | 按需 | 可选 | 执行 trace 与调试图，研究产物，不进 git |
-| `笔记.pdf` | 6M | 可选 | 个人笔记，不进 git |
-
-代码本体在 GitHub 私有库 `Calolinmax/ASPIRE`，随时可 clone，不用拷。
+| `SAM3/` 权重 | 6.5G | HuggingFace `facebook/sam3`（gated，需网页授权） | 推荐带走，省授权流程 |
+| CGN 权重 | 109M | 官方 Google Drive（链接见 [../docker/cgn/README.md](../docker/cgn/README.md)） | 推荐带走，GDrive 链接时效不可控 |
+| `external/` 其余 | ~8G | 各官方仓库（README §4.4） | 可选 |
+| CGN docker 镜像 tar | ~10G 级 | 可按 §5 从零重建 | 可选；想省 NGC 拉取可 `sudo docker save cgn-tf:25.02 \| gzip > cgn-tf-25.02.tar.gz` |
+| `traces/` `outputs/` `笔记.pdf` | 按需 | **无来源，纯本地产物** | 想要就必须带走 |
 
 ## 1. 系统层准备
 
@@ -71,17 +73,20 @@ huggingface-cli download facebook/sam3 --local-dir SAM3/
 sudo docker load < cgn-tf-25.02.tar.gz
 ```
 
-**无 tar 重建**（构建资产已存档在仓库 `docker/cgn/`，含对官方代码的补丁）：
+**无 tar 重建**（全部构建资产已存档在仓库 `docker/cgn/`，含官方克隆的本地修改）：
 
 ```bash
-git clone https://github.com/NVlabs/contact_graspnet.git external/contact_graspnet
+# 嵌套仓库完整快照：官方历史 + 2 个本地提交（stream 竞态修复 + openings 贯通）
+git clone docker/cgn/contact_graspnet.bundle external/contact_graspnet
 cd external/contact_graspnet
-git checkout $(cat ../../docker/cgn/UPSTREAM_COMMIT.txt)
+git apply ../../docker/cgn/contact_grasp_estimator.patch   # 未提交的本地补丁（+2/-1）
 cp ../../docker/cgn/{Dockerfile.cgn,.dockerignore,cgn_server_container.py,cgn_test_container.py,compile_pointnet_tfops.sh,compile_pointnet_tfops_container.sh} .
-git apply ../../docker/cgn/contact_grasp_estimator.patch
-# 权重从备份拷入：checkpoints/scene_test_2048_bs3_hor_sigma_001（109M，容器运行时挂载用）
+# 权重放入 checkpoints/scene_test_2048_bs3_hor_sigma_001（官方 Google Drive 下载或备份拷入，109M）
 sudo docker build -f Dockerfile.cgn -t cgn-tf:25.02 .
 ```
+
+pointnet2 的编译产物 .so 已随 bundle 入库，**一般无需重编译**；改 .cu/.cpp 后的
+重编译流程（含首次的鸡生蛋问题解法）见 [../docker/cgn/README.md](../docker/cgn/README.md)。
 
 容器启动与联调（容器名 `cgn`、端口 8117）见 [cgn_container.md](cgn_container.md)。
 

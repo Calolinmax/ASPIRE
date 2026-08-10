@@ -103,8 +103,8 @@ huggingface-cli download facebook/sam3 --local-dir SAM3/
 | 目录 | 内容 | 用途 |
 |---|---|---|
 | `cap-x/` | CaP-X 框架源码（MIT） | Primitive API 契约参照，**必需** |
-| `contact_graspnet/` | Contact-GraspNet 官方 TF1 代码 + 本项目的 `Dockerfile.cgn`/服务脚本 | CGN 抓取，**必需** |
-| `cgn_models/` | CGN 模型权重 | CGN 抓取，**必需** |
+| `contact_graspnet/` | Contact-GraspNet 官方 TF1 代码（[NVlabs/contact_graspnet](https://github.com/NVlabs/contact_graspnet)）| 可从仓库内 `docker/cgn/contact_graspnet.bundle` 直接恢复（含本地修复），权重需另备 |
+| `cgn_models/` | CGN 模型权重（[官方 Google Drive](https://drive.google.com/drive/folders/1tBHKf60K8DLM5arm-Chyf7jxkzOr5zGl)，用 `scene_test_2048_bs3_hor_sigma_001` 档，109M） | CGN 抓取，**必需** |
 | `piper_description/` | AgileX Piper 官方 URDF | IK/URDF-MJCF 标定 |
 | `agilex_arm_mujoco/` | AgileX 官方 MuJoCo 模型 | Piper MJCF 来源参照 |
 | `NVIDIA_deb/` | nvidia-container-toolkit 离线安装包 | 无网环境装 Docker GPU 支持 |
