@@ -98,7 +98,8 @@ huggingface-cli download facebook/sam3 --local-dir SAM3/
 
 ### 4.4 external/ 第三方资产
 
-以下目录体积过大不入库，按需自行准备并放到 `external/` 下
+以下目录体积过大不入库，按需自行准备并放到 `external/` 下。
+**逐项精确对齐（文件名/大小/摆放路径/钉版号/注意事项）见 [docs/external_assets.md](docs/external_assets.md)。**
 （代码类 2026-08-10 已逐个审计：除 contact_graspnet 外**均无本地改动**，直接重新克隆官方即可）：
 
 | 目录 | 内容 | 用途 |
@@ -150,6 +151,7 @@ curl http://localhost:8117/health
 ## 7. 文档索引
 
 - [docs/env_rebuild.md](docs/env_rebuild.md) — **换新机器完整恢复指南**（含旧机器备份清单）
+- [docs/external_assets.md](docs/external_assets.md) — **外部资产清单**（SAM3+external 逐项对齐：文件名/来源/摆放/注意事项）
 - [docs/project_files.md](docs/project_files.md) — 全项目逐文件说明（仓库地图）
 - [docs/roadmap.md](docs/roadmap.md) — Phase 1 起复现路线图（Skill Library / 进化搜索 / 真机）
 - [docs/api_asset_map.md](docs/api_asset_map.md) — API 资产对照表 + 进度看板（含 🔒 冻结声明）
