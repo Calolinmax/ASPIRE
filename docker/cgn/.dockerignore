@@ -1,0 +1,6 @@
+.git
+checkpoints/
+checkpoint/
+examples/
+*.zip
+__pycache__/

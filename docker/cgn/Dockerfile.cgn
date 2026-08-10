@@ -1,0 +1,31 @@
+FROM nvcr.io/nvidia/tensorflow:25.02-tf2-py3
+
+# 安装系统依赖
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && \
+    apt-get install -y -qq libgl1 libosmesa6-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# 安装 Python 依赖
+# tf_keras 版本必须匹配容器内 TF 版本（TF_USE_LEGACY_KERAS=1 需要它，
+# 否则老 checkpoint 无法 restore；动态取 tf.__version__ 保证不错位）
+RUN pip install --no-cache-dir 'numpy<2.0' trimesh pyrender opencv-python-headless fastapi uvicorn && \
+    pip install --no-cache-dir "tf_keras==$(python -c "import tensorflow as tf; print(tf.__version__.split('+')[0])")"
+
+# 环境变量（TF_USE_LEGACY_KERAS 必须在 tensorflow 导入前生效，
+# ENV 保证任何进程入口都继承；server 代码顶部也有 os.environ 双保险）
+ENV PYOPENGL_PLATFORM=osmesa
+ENV TF_USE_LEGACY_KERAS=1
+
+# 供 cgn_repro_wrapper_synthetic.py 等回归脚本在容器内定位代码与权重
+ENV CGN_REPO=/workspace
+ENV CGN_CKPT=/workspace/checkpoint/model.ckpt-144144
+
+WORKDIR /workspace
+
+# 代码 bake 进镜像（含容器内编译的 pointnet2 *.so；.dockerignore 排除权重/git）
+COPY . /workspace
+
+# checkpoint 运行时挂载到 /workspace/checkpoint（含 config.yaml + model.ckpt-144144.*）
+# docker run -v .../checkpoints/scene_test_2048_bs3_hor_sigma_001:/workspace/checkpoint:ro ...
+CMD ["python", "cgn_server_container.py"]

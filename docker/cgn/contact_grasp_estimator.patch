@@ -1,0 +1,14 @@
+diff --git a/contact_graspnet/contact_grasp_estimator.py b/contact_graspnet/contact_grasp_estimator.py
+index 4acd5de..7716d2d 100644
+--- a/contact_graspnet/contact_grasp_estimator.py
++++ b/contact_graspnet/contact_grasp_estimator.py
+@@ -61,7 +61,8 @@ class GraspEstimator:
+         tf_bin_vals = self._model_func.get_bin_vals(global_config)
+         offset_bin_pred_vals = tf.gather_nd(tf_bin_vals, tf.expand_dims(tf.argmax(end_points['grasp_offset_head'], axis=2), axis=2)) if global_config['MODEL']['bin_offsets'] else end_points['grasp_offset_pred'][:,:,0]
+ 
+-        grasp_preds = self._model_func.build_6d_grasp(end_points['approach_dir_head'], end_points['grasp_dir_head'], end_points['pred_points'], offset_bin_pred_vals, use_tf=True) # b x num_point x 4 x 4
++        grasp_preds = self._model_func.build_6d_grasp(end_points['approach_dir_head'], end_points['grasp_dir_head'], end_points['pred_points'], offset_bin_pred_vals, use_tf=True,
++                                                      gripper_depth=global_config['DATA'].get('gripper_depth', 0.1034)) # b x num_point x 4 x 4  # 2026-08-04: gripper_depth 从 config 透传（Piper 0.045, 原硬编码 Panda 0.1034）
+     
+         self.model_ops = {'pointclouds_pl': self.placeholders['pointclouds_pl'],
+                     'cam_poses_pl': self.placeholders['cam_poses_pl'],

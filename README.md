@@ -44,10 +44,12 @@ Contact-GraspNet 做 6-DoF 抓取位姿估计，pyroki 做 IK，RRT-Connect 做�
 | `aspire/` | 核心包，按层分目录：`engine/`（执行引擎）`api/`（Primitive API）`evidence/`（trace+标注）`planning/`（RRT+pyroki 客户端）`perception/`（SAM3/CGN 服务）`envs/`（场景）`robots/`（Piper 模型资产） |
 | `scripts/` | 任务层（统一 sh 入口）：`stack.sh`/`wipe.sh` 一键可视化 + `tasks/`（任务代码）`tests/`（自检）`tools/`（资产生产线/查看器/常驻服务）`archive/`（历史诊断） |
 | `docs/` | 设计与运维文档（API 契约、CGN 容器、SAM3、文件地图、路线图） |
+| `docker/cgn/` | CGN 容器构建资产存档（Dockerfile + 服务脚本 + 官方代码补丁），重建步骤见 [docs/env_rebuild.md](docs/env_rebuild.md) |
 | `open_details/` | ASPIRE 官方公布的任务代码 3 份 + skill 样例（复现基准） |
 | `external/` | ❗**不在仓库中**，第三方资产，需按 §4.4 准备 |
 | `SAM3/` | ❗**不在仓库中**，SAM3 模型权重，需按 §4.3 下载 |
-| `requirements_ASPIRE312.txt` | 主环境依赖清单（pip freeze） |
+| `requirements_core_sim.txt` | 核心依赖清单（仿真线，98 条，PyPI 全部可装）✅ 装环境用这个 |
+| `requirements_ASPIRE312.txt` | 旧机器完整 freeze（含 136 个 ROS 2 包，PyPI 无源，仅真机/ROS 联调需要） |
 
 `.gitignore` 已排除：`SAM3/`、`external/`、`outputs/`、`traces/`、`.env`、`__pycache__/` 等
 本地产物——**环境与大文件不进仓库，按下文重建**。
@@ -82,14 +84,17 @@ pip install torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytor
 ### 4.3 其余依赖 + SAM3 权重
 
 ```bash
-pip install -r requirements_ASPIRE312.txt
+pip install -r requirements_core_sim.txt
 
 # SAM3 权重（Meta gated repo，需先在 HuggingFace 网页登录并同意模型协议）
 huggingface-cli download facebook/sam3 --local-dir SAM3/
 ```
 
-`requirements_ASPIRE312.txt` 为本机环境完整 freeze（含 ROS 2 Jazzy Python 包、
-robosuite、mujoco、transformers 5.14.1、pyroki 等）；torch 已在 4.2 装好会自动跳过。
+`requirements_core_sim.txt` 为仿真线核心依赖（robosuite、mujoco、transformers 5.14.1 等，
+已逐条 PyPI 验证）；torch 已在 4.2 装好会自动跳过。
+完整 freeze `requirements_ASPIRE312.txt` 另含 136 个 ROS 2 Jazzy 包（PyPI 无源，
+仅真机/ROS 联调需要，仿真线不装）。
+**换新机器完整恢复流程见 [docs/env_rebuild.md](docs/env_rebuild.md)。**
 
 ### 4.4 external/ 第三方资产
 
@@ -115,6 +120,8 @@ cd external/contact_graspnet
 sudo docker build -f Dockerfile.cgn -t cgn-tf:25.02 .
 ```
 
+构建资产（Dockerfile、服务脚本、官方代码补丁）已在仓库 `docker/cgn/` 存档，
+从官方克隆重建的完整步骤见 [docs/env_rebuild.md](docs/env_rebuild.md) §5。
 启动与联调细节（容器名 `cgn`、端口 8117、健康检查）见
 [docs/cgn_container.md](docs/cgn_container.md)。
 
@@ -144,6 +151,7 @@ curl http://localhost:8117/health
 
 ## 7. 文档索引
 
+- [docs/env_rebuild.md](docs/env_rebuild.md) — **换新机器完整恢复指南**（含旧机器备份清单）
 - [docs/project_files.md](docs/project_files.md) — 全项目逐文件说明（仓库地图）
 - [docs/roadmap.md](docs/roadmap.md) — Phase 1 起复现路线图（Skill Library / 进化搜索 / 真机）
 - [docs/api_asset_map.md](docs/api_asset_map.md) — API 资产对照表 + 进度看板（含 🔒 冻结声明）
