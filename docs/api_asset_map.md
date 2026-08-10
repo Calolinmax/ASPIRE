@@ -14,6 +14,27 @@
 engine_capx / trace / vision_server / vision_client / annotate / motion_planner）
 头部有同款冻结警示。未完成项（`- [ ]`）不受此限。
 
+## 0.5b 🔒🔒 封版声明（2026-08-06 用户裁决 · 最终封版）
+
+**API 层全部测试完毕、无问题，正式封版。**
+- **范围**：cap-x 契约 15 函数 + 契约外 5 函数（grasp_cgn /
+  move_to_joints_planned / execute_legs_rrt / set_gripper_ramp /
+  draw_grasp_glyphs）+ 全部支撑组件（引擎/trace/RRT 规划器/视觉服务/
+  pyroki 客户端/标注）。
+- **规则**：**只能在 scripts 中调用，禁止修改——只有人类（顾问也不行）
+  批准才能更改。**
+- **机械保护**：以下文件已 `chmod a-w`（-r--r--r--），头部有 🔒 封版警示；
+  解冻须人类亲自 `chmod +w`：
+  `aspire/api/primitives_capx.py`、`engine_capx.py`、`engine.py`、`trace.py`、
+  `motion_planner.py`、`vision_server.py`、`vision_client.py`、`annotate.py`、
+  `pyroki_client.py`。
+- **不在封版范围**：scripts/ 下任务代码（demo 等，调用方可自由写）、
+  存档件（cgn_server.py / vision_sam3.py / primitives.py Panda 旧线）、
+  docs、robot.xml（相机参数另有锁死条款，见 E-a）。
+- **封版前验证**：viz_stack 可视化端到端多轮（CGN 抓取→堆叠→避障回程），
+  批量 DLS 库内真可达位姿回喂 40/40 收敛（详见 memory
+  cgn-grasp-pipeline-status 0806 系列迭代记录）。
+
 ## 0.6 2026-08-05 全面审计结论（本次打钩依据）
 
 - **打钩**：#5 plan_grasp（CGN 真身）、#15 碰撞 trace+路径检查、B-a CGN 服务、
@@ -24,6 +45,36 @@ engine_capx / trace / vision_server / vision_client / annotate / motion_planner�
   E1 类重构（现为 PrimitiveContextCapx + build_namespace, 函数面 11≠15）。
 - **决策关闭**：B-c cuRobo——D6 不阻塞条款 + 2026-08-05 用户裁决选 RRT-Connect
   （球体包络在 6.7mm 贴脸跨指场景不可用 + py3.12/torch2.13 安装风险）。
+
+## 0.7 2026-08-05 E1 收尾审计（看板全勾，Phase 0 函数面完成）
+
+- **E1 类重构完成**：`PrimitiveContextCapx` → **`PiperControlApiReduced`**
+  （别名保留，旧脚本零改动；`functions()` 导出契约 15 键 + 类常量
+  `IK_BACKEND="pyroki"` / `GRASP_BACKEND="cgn"`；`build_namespace` 改消费
+  `api.functions()`，命名空间 = 契约 15 + 契约外 `grasp_cgn` + `np`，
+  wrap/trace 逻辑不变；trace.py CATEGORIES 纯新增 `select_top_down_grasp`）。
+- **新函数 5 个**：#7（L1 vendor skill_library:319 原样）+ #11-#14
+  （配方 #11-#14，与 Panda 线已验证实现同构）。
+- **验证**：`test_piper_capx_api.py` **33/33 PASS**（新增 I/J/K 区 11 项：
+  I1-I4 类结构、J1a 与冻结参考反投影 1e-9 恒等、J1b/J2 GT、J3 往返、J4 端点、
+  K1-K3 三态）；10 个消费脚本 import 冒烟通过。
+- **✔ 深度管线精度验证（2026-08-05，曾虚惊一场）**：当日上午测试曾报
+  "渲染深度偏短 2.1cm"，根因实为**测试侧尺寸假设过期**——cubeA 为
+  4×4×8cm 立块（engine_capx.py:266，2026-08-03 裁决 3 细高化），旧测试
+  注释 "cube half=2cm" 是细高化前假设，把顶面 0.08 误判 0.06。经 GT 逐点
+  核实：深度管线与模型一致（**亚毫米**：顶面 z_p95 0.0798 vs GT 0.0798）。
+  处置：测试 C/F/J 区改为**从 model.geom_size 读尺寸** + 严格阈值
+  （顶面 p95 ±5mm、footprint 半宽+1cm）；demo 放置高度 RED_HALF_Z=0.04
+  修正（旧 RED_HALF=0.02 会把立块底面压进绿块 3cm）；demo 工作区 z 门控
+  (0.40,0.80)→(-0.05,0.20)（落地安装时代遗留）；demo 加收臂让拍 TUCK_Q
+  （Step 0/3/5，cgn_execute_grasp 同款）；engine_capx CLI 新增 --clutter /
+  --target-only（纯新增，用户指令清台测试）。
+- **注释修正**：primitives_capx 头部偏差声明补 #3（plan_grasp 返回**基座系**——
+  原文把"相机系返回约定"误列入契约一致清单，与 2026-08-04/05 已验证行为矛盾；
+  以行为为准修正注释，行为未动）。
+- 看板全部 `- [x]`（B-c 以"决策关闭"打勾）。验收标准 1（测试全 PASS）/3
+  （类+15 函数）/4（看板全勾）/5（文档一致）达成；标准 2（demo seed 0/1/2）
+  由 2026-08-04 端到端 PASS 覆盖，本次重构命名空间兼容、未动运动/视觉行为。
 
 ## 0. 两个先决结论
 
@@ -67,9 +118,11 @@ open_details 三份任务代码实际调用的函数中，**4 个工具函数不
   + 几何规划器兜底（cgn_execute_grasp 安全网, --once 下仍跳过）🔒
 - [x] **6. `get_oriented_bounding_box_from_3d_points(pts)`** — L3（PCA 版）｜
   `franka/common.py`（open3d 原版）｜ nut_assembly 用它取把手轴向；可选用 open3d 替换
-- [ ] **7. `select_top_down_grasp(grasps, scores, cam_to_world, vertical_threshold=0.8)`** ★
-  — **L1** ｜ `franka/control_reduced_skill_library.py:319`（~30 行）｜ 论文 api-reference
-  列出；Piper 上 threshold 调低=“尽量竖直”筛选器 → **handoff E1b**
+- [x] **7. `select_top_down_grasp(grasps, scores, cam_to_world, vertical_threshold=0.8)`** ★
+  — **L1** ｜ `franka/control_reduced_skill_library.py:319`（~30 行原样 vendor）｜
+  **已完成 2026-08-05**：test K1-K3 三态验证（竖直优先 / 阈值调低退化 /
+  (None,-inf)）；docstring 注明输入为 CGN 约定（+z=逼近，配 grasp_cgn 原始输出），
+  勿喂 plan_grasp 的 site 约定输出 🔒
 
 ### 运动（2）
 
@@ -85,21 +138,21 @@ open_details 三份任务代码实际调用的函数中，**4 个工具函数不
 
 ### 工具（4，open_details 实锤调用，cap-x reduced 契约外）★
 
-- [ ] **11. `mask_to_world_points(mask_u8, depth, K, pose_mat)`** — **L1** ｜
-  参考 `utils/depth_utils.py`（`depth_to_pointcloud`）；Panda 线 `primitives.py`
-  有同名实现可对照 ｜ 三份任务代码均用 → **handoff E1c**
-- [ ] **12. `pixel_to_world_point(u, v, z, K, E)`** — **L1** ｜ #11 的单点特化
-  （Molmo 打点落 3D）→ **handoff E1c**
-- [ ] **13. `rotation_matrix_to_quaternion(R)`** — **L1 自写** ｜ robosuite
-  `T.mat2quat`（xyzw）→ wxyz 重排，5 行 → **handoff E1c**
-- [ ] **14. `interpolate_segment(p0, p1, step)`** — **L1 自写** ｜ wipe 任务路径密化
-  （step=0.02），linspace 10 行 → **handoff E1c**
+- [x] **11. `mask_to_world_points(mask_u8, depth, K, pose_mat)`** — **L1** ｜
+  反投影数学抄 `utils/depth_utils.py:108` + y 负号适配（配方 #11，偏差声明 #1）
+  ｜ **已完成 2026-08-05**：test J1a 与冻结参考反投影 1e-9 恒等 + J1b GT 🔒
+- [x] **12. `pixel_to_world_point(u, v, z, K, E)`** — **L1** ｜ #11 的单点特化
+  （Molmo 打点落 3D）｜ **已完成 2026-08-05**：test J2 🔒
+- [x] **13. `rotation_matrix_to_quaternion(R)`** — **L1 自写** ｜ robosuite
+  `T.mat2quat`（xyzw）→ wxyz 重排 ｜ **已完成 2026-08-05**：test J3 往返 🔒
+- [x] **14. `interpolate_segment(p0, p1, step)`** — **L1 自写** ｜ wipe 路径密化，
+  linspace 含两端点 ｜ **已完成 2026-08-05**：test J4 🔒
 
 ### 碰撞（横切关注，非新函数）
 
 - [x] **15. 碰撞反馈进 trace + 运动路径碰撞检查** — L3 ｜ **已完成 2026-08-05**：
   trace.py `collision_events` 字段 + move_to_joints 逐 tick 采集落盘；
-  路径检查 move_to_joints_safely + `aspire/motion_planner.py` RRT-Connect
+  路径检查 move_to_joints_safely + `aspire/planning/motion_planner.py` RRT-Connect
   （含腕部实体, 手-方块净距余量 3mm, 逐腿即时规划——超额完成）🔒
 
 ### 引擎资产（非 API 函数）
@@ -122,15 +175,17 @@ open_details 三份任务代码实际调用的函数中，**4 个工具函数不
   docker 容器（cgn, checkpoint 配置挂载, 见 docs/cgn_container.md）+
   `vision_client.grasp_cgn` 调用；端到端 3/3 PASS（2026-08-05）🔒
 - [x] **B-b. pyroki** → #8 的真身后端 ｜ **已完成**：独立 venv 服务
-  （`scripts/pyroki_server_minimal.py` :8116, 坑 7 环境隔离）; solve_ik 默认后端,
+  （`scripts/tools/pyroki_server_minimal.py` :8116, 坑 7 环境隔离）; solve_ik 默认后端,
   MuJoCo FK 后验 + DLS/库/滚转扫描兜底 🔒
-- [ ] ~~**B-c. cuRobo 服务**~~ **决策关闭（不集成）**：D6 不阻塞条款;
+- [x] ~~**B-c. cuRobo 服务**~~ **决策关闭（不集成）**：D6 不阻塞条款;
   2026-08-05 用户裁决避障选 MuJoCo 真值 RRT-Connect——cuRobo 球体包络在
   6.7mm 贴脸跨指场景不可用 + py3.12/torch2.13 安装风险
-- [x] **B-d. 可视化工具** → 以自写 `aspire/annotate.py`（F2 定稿, 用户肉审通过）
+- [x] **B-d. 可视化工具** → 以自写 `aspire/evidence/annotate.py`（F2 定稿, 用户肉审通过）
   替代 cap-x vendor——trace 候选渲染职能已覆盖, 非字面 vendor 🔒
-- [ ] **B-e. `primitive_api_capx.md` 文档** → docstring 底稿 vendor（§4b 配方 E2）
-  ｜ 未写（现 docs/primitive_api.md 为 Panda 线存档 v0.3）
+- [x] **B-e. `primitive_api_capx.md` 文档** → docstring 底稿 vendor（§4b 配方 E2）
+  ｜ **已完成 2026-08-05**：`docs/primitive_api_capx.md` v1.0——15 函数逐一
+  签名/参数/返回/示例 + 后端映射表 + 三处有意偏差声明 + 已知上游深度 bias
+  表征（§4）🔒（docs/primitive_api.md 仍为 Panda 线存档，不动）
 
 ## 2. libero 线超集（决策点：暂不收录，需要时再加）
 
@@ -155,9 +210,9 @@ open_details 三份任务代码实际调用的函数中，**4 个工具函数不
 | 资产 | 位置 | 说明 |
 |---|---|---|
 | Piper 机器人注册（MJCF 适配） | `aspire/robots/` | 4 个 XML 兼容问题已修 |
-| ExecutionEngineCapx + trace | `aspire/engine_capx.py`、`aspire/trace.py` | = 论文组件 1 |
+| ExecutionEngineCapx + trace | `aspire/engine/engine_capx.py`、`aspire/evidence/trace.py` | = 论文组件 1 |
 | overhead 钩抓姿态族 + IK 种子库 | demo + `ik_library.npz` | Piper 运动学特有 |
-| SAM3 进程隔离（CUDA/EGL 冲突） | `aspire/vision_server.py`、`vision_client.py` | 架构与 cap-x serving 同构 |
+| SAM3 进程隔离（CUDA/EGL 冲突） | `aspire/perception/vision_server.py`、`vision_client.py` | 架构与 cap-x serving 同构 |
 
 ## 4. vendor 三层规则（写死）
 
@@ -208,7 +263,7 @@ open_details 三份任务代码实际调用的函数中，**4 个工具函数不
   ① **官方仓库拉取**：`external/contact_graspnet`（TF 版），权重从 GitHub Releases 下载
   ② **独立 venv**：`external/cgn_venv`（tensorflow==2.13.0，与主环境 PyTorch 隔离）
   ③ **服务化**：首选原样跑 cap-x `launch_contact_graspnet_server.py`，备选仿
-     `vision_server.py` 写 `aspire/cgn_server.py`（pickle/HTTP，端口 8117）
+     `vision_server.py` 写 `aspire/perception/cgn_server.py`（pickle/HTTP，端口 8117）
   ④ **空候选回落**：`_plan_grasp_geometric`
   ⑤ **位姿后处理（关键标定，必须可视化验证）**：
      ```
@@ -259,7 +314,7 @@ open_details 三份任务代码实际调用的函数中，**4 个工具函数不
 - **抄**：`capx/utils/visualization_utils.py` 的 `overlay_segmentation_masks` /
   `draw_molmo_point` / `draw_oriented_bounding_box` / `render_cylinder_axis`。
 - **用途**：论文组件 1 要求 trace 含 "grasp candidates" 可视化——plan_grasp 调用时
-  把候选位姿渲染回图像存 trace；现 `aspire/annotate.py` 可保留，二者择一/融合。
+  把候选位姿渲染回图像存 trace；现 `aspire/evidence/annotate.py` 可保留，二者择一/融合。
 - **适配 delta**：仅 import 路径；纯图像函数无框架耦合。
 
 ### 配方 E2 — `docs/primitive_api_capx.md` 文档底稿

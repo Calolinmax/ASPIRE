@@ -1,0 +1,75 @@
+<mujoco model="piper_wiper">
+  <!-- Piper 擦拭工具末端 · Franka 平板版 (2026-08-07 用户指令: 拿 Franka 擦头来用)
+       擦头几何/接触参数移植自官方 robosuite wiping_gripper.xml（Franka 用）:
+       12×5×3cm 海绵擦板（官方 wiping_surface_vis 尺寸）+ 软滑接触参数
+       （solimp 0.2 0.9 0.01 / solmix 10000 / solref 0.05 1 / friction 0.001 0.005 0.0001）。
+       官方把擦板拆成 13 个小盒是为其 reward 的逐块接触检测; 本管线判定走
+       env 侧的足迹矩形（env_wipe_spill._tally_visited）, 单盒即功能等价。
+
+       与 gripper.xml 的接口完全一致（冻结引擎依赖, 见 docs/api_asset_map.md）:
+         site "grip_site"（eef 子树原样, IK/FK 目标不变）
+         joint7/joint8 + equality（robot0_gripper_qpos 开合度观测语义不变）
+         actuator "gripper"（引擎直写 ctrl 目标不变; 指体无几何=纯摆设）
+
+       【安装角实测定案 2026-08-07】Piper 腕限位下严格顶朝下不可达; 滚转锁定
+       全姿态 IK 实测: 倾角 38° 是唯一能整路径收敛的姿态（44° 只 27/152,
+       50° 直接死）→ 擦板按倾角 38° 补偿安装: 姿态到位时板面与桌面平齐。
+         pad 系 = hand 系 rotX(-142°)（quat 0.3256 -0.9455 0 0）;
+         pad 长轴 = hand x（擦拭姿态下 = 世界 y, 12cm 横向覆盖）;
+         板面心在手系 z=+0.045（site→面心沿逼近轴 Δ=0.090, 任务代码 WIPER_FACE_L,
+         改模型须同步重测）; hand +z = 逼近轴方向（FK 实测, 见球版注释史）。
+       全部 geom density=0（动力学与 gripper.xml 一致: 质量只在 body inertial） -->
+  <compiler angle="radian"/>
+
+  <worldbody>
+    <body name="piper_hand" pos="0 0 0.13503" quat="1 0 0 0" gravcomp="1">
+      <inertial pos="0 0 -0.02" mass="0.05" diaginertia="1e-5 1e-5 1e-5"/>
+
+      <!-- TCP 参考（与 gripper.xml 逐字一致）: 指尖垫接触面中点。
+           姿态 quat="0 0 1 0"（绕 y 180°）: site z = 腕部→指尖的逼近方向,
+           y = 原手指开合轴。冻结引擎的 IK/FK 全锚在这个 site 上, 勿动。 -->
+      <body name="eef" pos="0 0 -0.045" quat="0 0 1 0">
+        <site name="grip_site" pos="0 0 0" size="0.01 0.01 0.01" rgba="1 0 0 0.5" type="sphere" group="1"/>
+        <site name="ee_x" pos="0.05 0 0" size="0.004 .05" quat="0.707105 0 0.707108 0" rgba="1 0 0 0" type="cylinder" group="1"/>
+        <site name="ee_y" pos="0 0.05 0" size="0.004 .05" quat="0.707105 0.707108 0 0" rgba="0 1 0 0" type="cylinder" group="1"/>
+        <site name="ee_z" pos="0 0 0.05" size="0.004 .05" quat="1 0 0 0" rgba="0 0 1 0" type="cylinder" group="1"/>
+        <site name="grip_site_cylinder" pos="0 0 0" size="0.005 10" rgba="0 1 0 0.3" type="cylinder" group="1"/>
+      </body>
+
+      <!-- 指体（接口兼容层）: 关节/惯量保留（观测与执行器语义不变）, 几何已拆 -->
+      <body name="link7" pos="0 0 0" quat="1.89468e-08 1.89469e-08 0.707108 0.707105" gravcomp="1">
+        <inertial pos="-0.000277778 -0.0467673 -0.00921029" quat="0.46134 0.536174 -0.553273 0.439968"
+          mass="0.0264823" diaginertia="0.001 0.001 0.001"/>
+        <joint name="joint7" axis="0 0 -1" type="slide" range="0 0.035" frictionloss="0"/>
+      </body>
+      <body name="link8" pos="0 0 0" quat="1.89468e-08 -1.89469e-08 -0.707108 0.707105" gravcomp="1">
+        <inertial pos="0.000277817 0.0467674 -0.0092103" quat="0.553273 0.439968 -0.46134 0.536174"
+          mass="0.0264822" diaginertia="0.001 0.001 0.001"/>
+        <joint name="joint8" axis="0 0 1" type="slide" range="-0.035 0" frictionloss="0"/>
+      </body>
+
+      <!-- 擦拭头: 颈 + Franka 海绵擦板（38° 补偿安装, 见文件头注释）。
+           接触参数: 官方 wiping_gripper.xml 的 solimp/solmix/friction 照抄,
+           但 solref 时间常数 0.05→0.20（2026-08-07 实测根因: 官方参数系
+           Franka 力矩控制臂的设定; Piper 是位置伺服, 12×5cm 硬接触面在
+           2mm 按压下法向力 ~百牛级, 伺服漂移到 0.46rad 判未到位——
+           软化后同按压法向力 ~牛级, 伺服照常收敛）。 -->
+      <geom name="wiper_neck" type="capsule" fromto="0 0.002 -0.002  0 0.0185 0.0214"
+        size="0.008" density="0" rgba="0.30 0.30 0.32 1"/>
+      <geom name="wiper_pad" type="box" pos="0 0.0092 0.0332" quat="0.3256 -0.9455 0 0"
+        size="0.06 0.025 0.015" density="0" condim="3"
+        solimp="0.2 0.9 0.01" solmix="10000" solref="0.2 1"
+        friction="0.001 0.005 0.0001" rgba="0.82 0.68 0.45 1"/>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- 与 gripper.xml 逐字一致（冻结引擎直写 ctrl 目标） -->
+    <position name="gripper" joint="joint7" kp="120" kv="5" forcerange="-10 10"
+      ctrllimited="true" ctrlrange="0 0.035"/>
+  </actuator>
+
+  <equality>
+    <joint joint1="joint8" joint2="joint7" polycoef="0 -1 0 0 0"/>
+  </equality>
+</mujoco>

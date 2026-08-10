@@ -1,0 +1,72 @@
+<mujoco model="piper_wiper">
+  <!-- Piper 擦拭工具末端 (2026-08-06 用户指令: 夹爪拆掉换擦头, 完成真擦除)
+       来源: gripper.xml 改造——指体几何全拆, piper_hand 下挂 手柄+杆+球形擦头。
+       与 gripper.xml 的接口完全一致（冻结引擎依赖, 见 docs/api_asset_map.md）:
+         site "grip_site"（eef 子树原样, IK/FK 目标不变）
+         joint7/joint8 + equality（robot0_gripper_qpos 开合度观测语义不变）
+         actuator "gripper"（引擎直写 ctrl 目标不变; 指体无几何=纯摆设）
+       擦头几何（piper_hand 系; +z = 逼近轴方向, FK 实测定案 2026-08-06）:
+         尾柄 z∈[-0.045,-0.005] + 杆 + 球心 z=+0.029, 球半径 12mm
+         → site→球心沿逼近轴 L=0.074（任务代码 WIPER_L, 改模型须同步）;
+         球-桌接触点 = 球心正下方 r 处（球形, 姿态角无关）; 倾角 44° 按压 2mm
+         时 site z = r-press+L·cos44° ≈ 0.063。
+       接触参数抄官方 wiping_gripper.xml（软+滑: 羽毛级按压即可拖动, 不粘伺服）:
+         solimp="0.2 0.9 0.01" solmix="10000" solref="0.05 1" friction="0.001 0.005 0.0001"
+       全部 geom density=0（动力学与 gripper.xml 一致: 质量只在 body inertial） -->
+  <compiler angle="radian"/>
+
+  <worldbody>
+    <body name="piper_hand" pos="0 0 0.13503" quat="1 0 0 0" gravcomp="1">
+      <inertial pos="0 0 -0.02" mass="0.05" diaginertia="1e-5 1e-5 1e-5"/>
+
+      <!-- TCP 参考（与 gripper.xml 逐字一致）: 指尖垫接触面中点。
+           姿态 quat="0 0 1 0"（绕 y 180°）: site z = 腕部→指尖的逼近方向,
+           y = 原手指开合轴。冻结引擎的 IK/FK 全锚在这个 site 上, 勿动。 -->
+      <body name="eef" pos="0 0 -0.045" quat="0 0 1 0">
+        <site name="grip_site" pos="0 0 0" size="0.01 0.01 0.01" rgba="1 0 0 0.5" type="sphere" group="1"/>
+        <site name="ee_x" pos="0.05 0 0" size="0.004 .05" quat="0.707105 0 0.707108 0" rgba="1 0 0 0" type="cylinder" group="1"/>
+        <site name="ee_y" pos="0 0.05 0" size="0.004 .05" quat="0.707105 0.707108 0 0" rgba="0 1 0 0" type="cylinder" group="1"/>
+        <site name="ee_z" pos="0 0 0.05" size="0.004 .05" quat="1 0 0 0" rgba="0 0 1 0" type="cylinder" group="1"/>
+        <site name="grip_site_cylinder" pos="0 0 0" size="0.005 10" rgba="0 1 0 0.3" type="cylinder" group="1"/>
+      </body>
+
+      <!-- 指体（接口兼容层）: 关节/惯量保留（观测与执行器语义不变）, 几何已拆 -->
+      <body name="link7" pos="0 0 0" quat="1.89468e-08 1.89469e-08 0.707108 0.707105" gravcomp="1">
+        <inertial pos="-0.000277778 -0.0467673 -0.00921029" quat="0.46134 0.536174 -0.553273 0.439968"
+          mass="0.0264823" diaginertia="0.001 0.001 0.001"/>
+        <joint name="joint7" axis="0 0 -1" type="slide" range="0 0.035" frictionloss="0"/>
+      </body>
+      <body name="link8" pos="0 0 0" quat="1.89468e-08 -1.89469e-08 -0.707108 0.707105" gravcomp="1">
+        <inertial pos="0.000277817 0.0467674 -0.0092103" quat="0.553273 0.439968 -0.46134 0.536174"
+          mass="0.0264822" diaginertia="0.001 0.001 0.001"/>
+        <joint name="joint8" axis="0 0 1" type="slide" range="-0.035 0" frictionloss="0"/>
+      </body>
+
+      <!-- 擦拭头: 尾柄 + 杆 + 球形擦头。
+           【方向实测定案 2026-08-06】hand 系 +z = 逼近轴方向（site_z = hand -z,
+           编译模型 FK 实测; 擦拭/抓取姿态下 hand +z 朝桌面前下方, 法兰面之外
+           是自由空间）; 指垫在 hand z=-0.045, 擦拭时朝后上方, 不参与接触。
+           几何: 尾柄 z∈[-0.045,-0.005]（原指体区）+ 杆 z∈[-0.005,+0.029]
+           + 球心 z=+0.029 r=12mm → site→球心沿逼近轴 L=0.074（任务代码
+           WIPER_L, 改模型须同步）; 球-桌接触点 = 球心正下方 r 处。
+           接触参数抄官方 wiping_gripper.xml（软+滑: 羽毛级按压即可拖动） -->
+      <geom name="wiper_handle" type="cylinder" pos="0 0 -0.025" size="0.016 0.020"
+        density="0" rgba="0.30 0.30 0.32 1"/>
+      <geom name="wiper_stem" type="cylinder" pos="0 0 0.012" size="0.007 0.017"
+        density="0" rgba="0.45 0.45 0.48 1"/>
+      <geom name="wiper_ball" type="sphere" pos="0 0 0.029" size="0.012"
+        density="0" condim="3" solimp="0.2 0.9 0.01" solmix="10000" solref="0.05 1"
+        friction="0.001 0.005 0.0001" rgba="0.85 0.72 0.50 1"/>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- 与 gripper.xml 逐字一致（冻结引擎直写 ctrl 目标） -->
+    <position name="gripper" joint="joint7" kp="120" kv="5" forcerange="-10 10"
+      ctrllimited="true" ctrlrange="0 0.035"/>
+  </actuator>
+
+  <equality>
+    <joint joint1="joint8" joint2="joint7" polycoef="0 -1 0 0 0"/>
+  </equality>
+</mujoco>

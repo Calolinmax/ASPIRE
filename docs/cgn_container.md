@@ -16,7 +16,7 @@ RTX 5090（sm_120）与 TF pip wheel 系统性不兼容而放弃，转为 **NGC 
 ```
 宿主机                                    容器 (cgn-tf:25.02)
 ┌─────────────────────────┐              ┌──────────────────────────────┐
-│ aspire/vision_client.py │  pickle/HTTP │ cgn_server_container.py      │
+│ aspire/perception/vision_client.py │  pickle/HTTP │ cgn_server_container.py      │
 │   grasp_cgn()  ─────────┼─────────────►│   FastAPI, 0.0.0.0:8117      │
 │        (N,4,4),(N,) ◄───┼──────────────│   wrapper.ContactGraspnet    │
 └─────────────────────────┘              │   TF 2.17 + pointnet2 ops    │
@@ -26,7 +26,7 @@ RTX 5090（sm_120）与 TF pip wheel 系统性不兼容而放弃，转为 **NGC 
 
 - **契约**：POST `/grasp`，pickle `{depth(H,W米), K(3,3), seg(H,W), z_range, forward_passes}`
   → 返回 pickle `{grasps(N,4,4) 相机系OpenCV, scores(N,)}`。GET `/health` 返回纯 JSON。
-- `aspire/cgn_server.py`（宿主机直跑时代服务端）**留档不用**，不要启动。
+- `aspire/perception/cgn_server.py`（宿主机直跑时代服务端）**留档不用**，不要启动。
 
 ## 2. 镜像构建
 
@@ -300,7 +300,7 @@ bug；engine 初始化有 cam_xpos 漂移自检）：
 | `external/contact_graspnet/contact_graspnet/wrapper.py` | GraspEstimator 高层封装 |
 | `external/contact_graspnet/pointnet2/tf_ops/{sampling,grouping}/*` | stream 修复现场 |
 | `external/contact_graspnet/test_data/*.npy` | 官方测试数据（P0 判决用，勿提交） |
-| `aspire/vision_client.py` | 客户端（`grasp_cgn`，8117） |
-| `aspire/cgn_server.py` | 宿主机直跑服务端（留档，勿启动） |
+| `aspire/perception/vision_client.py` | 客户端（`grasp_cgn`，8117） |
+| `aspire/perception/cgn_server.py` | 宿主机直跑服务端（留档，勿启动） |
 | `scripts/cgn_repro_*.py` | CUDA 崩溃回归资产（容器/宿主机双环境） |
 | `scripts/cgn_verify_steps.py` | 端到端分段验证 + D2/D3 指标 |

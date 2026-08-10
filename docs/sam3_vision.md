@@ -13,7 +13,7 @@ SAM3（Segment Anything Model 3，Meta，848M 参数）原生支持**开放词�
 
 | 文件 | 说明 |
 |------|------|
-| `aspire/vision_sam3.py` | 视觉模块（唯一入口） |
+| `aspire/perception/vision_sam3.py` | 视觉模块（唯一入口） |
 | `SAM3/` | facebook/sam3 的 HF 仓库快照（model.safetensors 3.4GB + sam3.pt + tokenizer/processor 配置） |
 
 > 旧 MobileSAM ONNX 方案（`vision_sam_onnx.py`、`models/mobile_sam_*`、导出/验证脚本）
@@ -22,7 +22,7 @@ SAM3（Segment Anything Model 3，Meta，848M 参数）原生支持**开放词�
 ## 2. 环境
 
 - conda 环境 **ASPIRE**（Python 3.12），包版本与旧 aspire（py3.10）完全一致 + transformers 5.14.1
-- 安装复现：`requirements_aspire312.txt` + `torch==2.13.0 torchvision==0.28.0`（pytorch cu130 index）+ `transformers`
+- 安装复现：`requirements_ASPIRE312.txt` + `torch==2.13.0 torchvision==0.28.0`（pytorch cu130 index）+ `transformers`
 - 推理 GPU 占用 ~8GB（文本模型 + Tracker 模型 + robosuite EGL 渲染共存，24GB 充裕）
 
 ### 迁移中踩过的三个坑（py3.12 新环境）
@@ -67,7 +67,7 @@ per-step 检测场景无感；非颜色 prompt（"mug"、"handle"）现在可直
 之后的所有 readback 返回固定垃圾帧（竖条纹/大面积死黑），不自愈，流入视觉会导致检测全灭
 （旧 py3.10 环境 16 次未观察到，机制未明，与 CUDA 推理共存的时序竞争相关）。
 
-**防护**（已实现于 [engine.py](../aspire/engine.py)）：
+**防护**（已实现于 [engine.py](../aspire/engine/engine.py)）：
 
 1. **检测**：`ExecutionEngine._img_corrupt()` —— 水平相邻像素差 p95 > 25 或近零像素 > 30%
    （正常帧 ≤10，损坏帧 ≥60，间隔充足）。每个 `engine.step()` 后自动 healthcheck。
@@ -87,7 +87,7 @@ trace 中可见 `renderer_recoveries` 计数与恢复日志。
 
 MobileSAM 相关文件（模块/权重/脚本）已删除，如需回退请从 git 历史恢复。
 视觉接口契约（函数签名与返回结构）自 MobileSAM 时代起保持一致，
-替换视觉实现只需改 `aspire/primitives.py` 顶部的一行 import。
+替换视觉实现只需改 `aspire/api/primitives.py` 顶部的一行 import。
 
 ## 参考
 

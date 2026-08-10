@@ -151,16 +151,16 @@ traces/0727_1352_Stack/
 skill library / 进化搜索），本项目的定位是**复现三组件，cap-x 当插件不当宿主**。
 
 - ✅ API 基底：`FrankaControlApiReduced` 契约（`external/cap-x/capx/integrations/franka/control_reduced.py`）
-  → Piper 实现 `PiperControlApiReduced`（`aspire/primitives_capx.py`，10 函数 1:1）
+  → Piper 实现 `PiperControlApiReduced`（`aspire/api/primitives_capx.py`，10 函数 1:1）
 - ✅ Coding agent：Claude Code 本机直接担任（**与论文同构**——论文用 Claude Code + Opus 4.6 1M）
 - ❌ 不配置外部 API / 不写 CLI 调用框架（CLI 自动化留待无人值守阶段）
 - ✅ `open_details/` 下三个任务代码作为 few-shot 示例注入 prompt
 - 工作模式：交互式循环 —— 生成代码 → 执行引擎运行 → 看 trace → 修代码
 
-**当前进展与文档索引**：长期路线图见 `ASPIRE_REPRO_PLAN.md`（2026-07-28 重写）；
-cap-x/Piper 线的交接与验收标准见 `handoff_piper_control_api.md`（仓库根目录）；
-两条 API 线：Panda 线（`aspire/engine.py` + `aspire/primitives.py`，模块 2 存档）
-与 **cap-x/Piper 线（`aspire/engine_capx.py` + `aspire/primitives_capx.py`，当前主线）**。
+**当前进展与文档索引**：路线图见 `docs/roadmap.md`（Phase 1 起）；
+仓库地图见 `docs/project_files.md`（逐文件说明）；
+两条 API 线：Panda 线（`aspire/engine/engine.py` + `aspire/api/primitives.py`，模块 2 存档）
+与 **cap-x/Piper 线（`aspire/engine/engine_capx.py` + `aspire/api/primitives_capx.py`，当前主线，已封版）**。
 
 ---
 

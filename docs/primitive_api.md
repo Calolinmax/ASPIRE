@@ -1,9 +1,9 @@
 # ASPIRE Primitive API 文档（复现版 v0.3 · Panda 线存档）
 
-> ⚠️ **状态（2026-07-28）**：本文档对应**模块 2 的 Panda 线**（`aspire/engine.py` +
-> `aspire/primitives.py`，Lift 已验证，存档保留）。**当前 API 主线是 cap-x 契约 / Piper 线**：
-> `aspire/primitives_capx.py`（10 函数与 `FrankaControlApiReduced` 1:1），其权威文档为
-> `docs/primitive_api_capx.md`（随 Phase 0 收尾补全），交接见 `handoff_piper_control_api.md`（仓库根目录）。
+> ⚠️ **状态（2026-07-28）**：本文档对应**模块 2 的 Panda 线**（`aspire/engine/engine.py` +
+> `aspire/api/primitives.py`，Lift 已验证，存档保留）。**当前 API 主线是 cap-x 契约 / Piper 线**：
+> `aspire/api/primitives_capx.py`（15 函数契约，2026-08-06 封版），其权威文档为
+> `docs/primitive_api_capx.md`。
 > 新任务代码一律以 cap-x 线文档为准，不要再以本文档为"唯一 API 依据"。
 
 > **本文档是 Coding Agent（K3）生成任务代码的唯一 API 依据（仅限 Panda 线任务）。**
