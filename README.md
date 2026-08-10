@@ -98,17 +98,18 @@ huggingface-cli download facebook/sam3 --local-dir SAM3/
 
 ### 4.4 external/ 第三方资产
 
-以下目录体积过大不入库，按需自行准备并放到 `external/` 下：
+以下目录体积过大不入库，按需自行准备并放到 `external/` 下
+（代码类 2026-08-10 已逐个审计：除 contact_graspnet 外**均无本地改动**，直接重新克隆官方即可）：
 
 | 目录 | 内容 | 用途 |
 |---|---|---|
-| `cap-x/` | CaP-X 框架源码（MIT） | Primitive API 契约参照，**必需** |
+| `cap-x/` | CaP-X 框架源码（[capgym/cap-x](https://github.com/capgym/cap-x)，MIT） | Primitive API 契约参照，**必需** |
 | `contact_graspnet/` | Contact-GraspNet 官方 TF1 代码（[NVlabs/contact_graspnet](https://github.com/NVlabs/contact_graspnet)）| 可从仓库内 `docker/cgn/contact_graspnet.bundle` 直接恢复（含本地修复），权重需另备 |
 | `cgn_models/` | CGN 模型权重（[官方 Google Drive](https://drive.google.com/drive/folders/1tBHKf60K8DLM5arm-Chyf7jxkzOr5zGl)，用 `scene_test_2048_bs3_hor_sigma_001` 档，109M） | CGN 抓取，**必需** |
-| `piper_description/` | AgileX Piper 官方 URDF | IK/URDF-MJCF 标定 |
-| `agilex_arm_mujoco/` | AgileX 官方 MuJoCo 模型 | Piper MJCF 来源参照 |
-| `NVIDIA_deb/` | nvidia-container-toolkit 离线安装包 | 无网环境装 Docker GPU 支持 |
-| `cgn_venv/` | 宿主机 TF fallback 环境 | 留档调试用，**正常任务不要用** |
+| `piper_description/` | AgileX Piper 官方 URDF（[agilexrobotics/agx_arm_urdf](https://github.com/agilexrobotics/agx_arm_urdf)） | IK/URDF-MJCF 标定 |
+| `agilex_arm_mujoco/` | AgileX 官方 MuJoCo 模型（[yanyuze1/agilex_arm_mujoco](https://github.com/yanyuze1/agilex_arm_mujoco)） | Piper MJCF 来源参照 |
+| `NVIDIA_deb/` | nvidia-container-toolkit 离线安装包（NVIDIA 官方 apt 源可重下） | 无网环境装 Docker GPU 支持 |
+| `cgn_venv/` | 宿主机 TF fallback 环境（6.9G，venv 不可移植） | 留档调试用，**换机不用带，正常任务不要用** |
 
 > 仓库名/下载地址请以各官方渠道为准；HF 遇 403/401 多半是 gated repo 未授权，
 > 不要误判为项目不存在。
@@ -128,9 +129,6 @@ sudo docker build -f Dockerfile.cgn -t cgn-tf:25.02 .
 ## 5. 验证安装
 
 ```bash
-# 场景构建 smoke test（不依赖 CGN/SAM3）
-python scripts/tests/test_piper_build.py
-
 # API 全量自检（15 函数契约，33 项）
 python scripts/tests/test_piper_capx_api.py
 
