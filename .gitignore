@@ -27,3 +27,4 @@ models/
 # IDE
 .vscode/
 .idea/
+agent_runs/

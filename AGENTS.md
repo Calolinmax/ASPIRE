@@ -153,9 +153,14 @@ skill library / 进化搜索），本项目的定位是**复现三组件，cap-x
 - ✅ API 基底：`FrankaControlApiReduced` 契约（`external/cap-x/capx/integrations/franka/control_reduced.py`）
   → Piper 实现 `PiperControlApiReduced`（`aspire/api/primitives_capx.py`，10 函数 1:1）
 - ✅ Coding agent：Claude Code 本机直接担任（**与论文同构**——论文用 Claude Code + Opus 4.6 1M）
-- ❌ 不配置外部 API / 不写 CLI 调用框架（CLI 自动化留待无人值守阶段）
+- ✅ **程序化 agentic coding 已落地（2026-08-10，用户指令）**：`aspire/agentic/`
+  （LLM client/actor/coordinator/Algorithm 1 进化搜索）+ `aspire/skills/`（技能库）+
+  `aspire/web/`（Web UI）。LLM 走 `.env` 配置（`.env.example` 为模板）；
+  `--provider file` = 文件桥接模式（无 key 时人工/Claude Code 当模型，与本节交互式
+  工作流完全同构）。设计对照表见 `docs/agentic_design.md`。
 - ✅ `open_details/` 下三个任务代码作为 few-shot 示例注入 prompt
 - 工作模式：交互式循环 —— 生成代码 → 执行引擎运行 → 看 trace → 修代码
+  （程序化版：actor.py 的 repair loop 即此循环的自动化）
 
 **当前进展与文档索引**：路线图见 `docs/roadmap.md`（Phase 1 起）；
 仓库地图见 `docs/project_files.md`（逐文件说明）；

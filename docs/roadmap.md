@@ -13,8 +13,8 @@ ASPIRE = CaP-X 基底（robot programming APIs）+ 三组件：
 |---|---|---|
 | 基底 | CaP-X Primitive API（感知/几何/运动规划） | ✅ 契约 15 函数封版（2026-08-06） |
 | 组件 1 | 闭环执行引擎 + 多模态 trace（观测/输入/输出/视觉证据/碰撞反馈） | ✅ engine + trace 体系封版 |
-| 组件 2 | Skill Library（持续扩张的技能库） | ⬜ **Phase 1（下一步）** |
-| 组件 3 | 进化搜索（多样任务序列+控制程序, 系统性 debug） | ⬜ Phase 2 |
+| 组件 2 | Skill Library（持续扩张的技能库） | ✅ **模块落地（2026-08-10）**：`aspire/skills/` + `skill_library/` 种子 5 条；对照实验待跑 |
+| 组件 3 | 进化搜索（多样任务序列+控制程序, 系统性 debug） | ✅ **模块落地（2026-08-10）**：`aspire/agentic/`（actor/coordinator/Algorithm 1 并行进化） |
 
 论文的 coding agent = Claude Code + Claude Opus（1M 上下文）——本项目工作方式同构。
 
@@ -33,6 +33,15 @@ ASPIRE = CaP-X 基底（robot programming APIs）+ 三组件：
 
 **目标**：debug→validate→入库→注入 全链路跑通，见到第一个真实 skill 入库并起效。
 
+**模块状态（2026-08-10）**：✅ 全链路代码落地并通过测试——
+`aspire/skills/`（schema/library/synthesize：四要素 SKILL.md、文件锁串行入库、
+AST API 合规硬卡）+ `aspire/agentic/`（actor/coordinator/evolve，E.1/E.3 协议逐字落实）
++ `skill_library/` 种子 5 条（实测经验蒸馏：Piper 可达性与抓取姿态、SAM3 级联、
+RRT 纪律、wipe 覆盖、trace 读图纪律）。入口 `scripts/agentic.sh` / `scripts/web.sh`。
+测试：`test_agentic.py` 44/44 + `test_agentic_e2e.py` 真实引擎端到端 PASS + 冻结层回归 33/33。
+**待办（需真实 LLM）**：配 `.env` 后跑真实 actor 修复 loop 产出首个 LLM 撰写 skill；
+对照实验（有/无注入）成功率统计。
+
 - findings.md schema（failure mode / validated repair / transferable patterns / 验证成功率）；
 - coordinator 角色审计提炼 SKILL.md（论文附录 E.5 模板）；
 - 注入机制（初期全量注入，skill 数 >20 后做检索）；
@@ -50,6 +59,12 @@ ASPIRE = CaP-X 基底（robot programming APIs）+ 三组件：
 ## 2. Phase 2 — 进化搜索（论文组件 3）
 
 **目标**：K≥4 候选程序锦标赛 + 多代进化，候选**并行评估**（多进程 sim 实例，AGENTS.md 硬性要求）。
+
+**模块状态（2026-08-10）**：✅ `aspire/agentic/evolve.py` = Algorithm 1 逐行实现
+（ℋ 累积/Top3 条件化/θ 早停/Stage 2 一次性/ExtractValidatedPatterns）+ E.4 全义务
+（task_analysis.md 跨代持久、candidate_A verbatim 精英种子、独立假设+docstring、
+反过拟合条款）；K 候选 × seeds 全并行子进程评估（`evaluate.py`，AGENTS.md §2 达成）。
+**待办（需真实 LLM）**：≥3 任务上 evo search vs 单轨迹修复的对照。
 
 - 候选生成（温度/扰动采样）、并行评估 harness、基于 surviving programs + residual traces
   的下一代条件化；

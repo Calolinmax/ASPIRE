@@ -23,6 +23,8 @@
 | 感知服务层 🔒 | `aspire/perception/`：`vision_server.py` + `vision_sam3.py` + `vision_client.py`（SAM3，:8123）、`cgn_server.py`（CGN 容器内，:8117） |
 | 机器人资产层 🔒 | `aspire/robots/`（注册入口 + 模型类 + MJCF/网格/IK 库） |
 | 场景层（不锁） | `aspire/engine/engine_capx.py` 内 StackClutter、`aspire/envs/wipe_spill.py`（PiperWipeSpill）；新场景放 `aspire/envs/` 并经 `aspire/robots/__init__.py` 注册（需解锁） |
+| **Agentic 层**（2026-08-10 新建，不锁） | `aspire/agentic/`（LLM client/trace 摘要/prompts/并行评估/actor/coordinator/进化搜索/CLI）、`aspire/skills/`（技能库 schema/库/审计）、`aspire/web/`（Web UI）——论文组件 2+3，见 `docs/agentic_design.md` |
+| **技能库数据**（git 跟踪） | `skill_library/<category>/<name>.md` + `index.json`（5 条种子条目，E.5 格式）；运行产物 `agent_runs/`（gitignore） |
 | 文档层 | `README.md`、`AGENTS.md`、`docs/` |
 | 复现基准 | `open_details/`（官方任务代码 3 份 + skill 样例）、`ASPIRE源论文/` |
 
@@ -68,8 +70,62 @@ aspire/
 │   └── cgn_server.py    #   CGN FastAPI 服务壳 :8117（跑在 docker 容器内，100 行）
 ├── envs/                # 场景层（不锁，新场景放这里）
 │   └── wipe_spill.py    #   PiperWipeSpill 污渍场景（215 行）
+├── agentic/             # Agentic coding 层（2026-08-10 新建，不锁）
+│   ├── config.py / llm_client.py / trace_digest.py / prompts.py / task_spec.py
+│   ├── evaluate.py / actor.py / coordinator.py / evolve.py / cli.py
+├── skills/              # Skill Library 层（2026-08-10 新建，不锁）
+│   ├── schema.py / library.py / synthesize.py
+├── web/                 # Web UI 层（2026-08-10 新建，不锁）
+│   ├── server.py / static/index.html
 └── robots/              # 机器人资产层 🔒（2026-08-07 加锁，见 §3）
 ```
+
+### `agentic/`（Agentic coding 层，2026-08-10 新建，不锁）
+
+> 论文组件 3（+组件 1 的 LLM 消费侧）。**导引见 `aspire/agentic/README.md`，
+> 设计对照表见 `docs/agentic_design.md`**。测试 44/44 + 真实引擎 E2E PASS。
+
+| 文件 | 说明 |
+|---|---|
+| `config.py` | LLM 配置（env/.env，`ASPIRE_LLM_*`）：provider = openai/anthropic/file/mock；file=与 AGENTS.md §4 交互式工作流同构的文件桥接。 |
+| `llm_client.py` | vendor cap-x `capx/llm/client.py`：单次/并行集成（并发候选+LLM 综合）/流式/多模态 data URL/fence 抽取；delta=provider 分派、重试封顶、删 OpenRouter 改道。 |
+| `trace_digest.py` | 论文 §2.1 LLM 消费侧：trace.json → 调用摘要+失败信号扫描+失败邻近前后帧/标注图（max_images 上限）。 |
+| `prompts.py` | ACTOR_SYSTEM（任务代码规则+E.2 FORBIDDEN+API 参考）、E.3 findings 逐字模板、E.1 审计、E.4 候选生成（反过拟合条款）与 task_analysis 更新。 |
+| `task_spec.py` | TaskSpec（场景/指令/成功判定/seed 划分/基线路径）；内置 Stack、PiperWipeSpill。 |
+| `evaluate.py` | **并行评估 harness**（AGENTS.md §2）：(候选,seed) 子进程池跑引擎 CLI；vision_server 单例预拉；cancel_all 支持 web 停止。 |
+| `actor.py` | E.3 修复闭环：fast path→debug loop（≤3 轮）→Stage 2 一次性→findings.md。 |
+| `coordinator.py` | E.1：progress.json 队列、分派、只读 findings、串行入库、不重复分派。 |
+| `evolve.py` | **Algorithm 1 逐行** + E.4：task_analysis.md 跨代、candidate_A verbatim 精英种子、K 并行评估、θ 早停、基线回落。 |
+| `cli.py` | `python -m aspire.agentic.cli {actor|evosearch|coordinator|skills|digest}`。 |
+
+### `skills/`（Skill Library 层，2026-08-10 新建，不锁）
+
+> 论文组件 2。格式标杆 `open_details/skill_grasp.md`；导引见 `aspire/skills/README.md`。
+
+| 文件 | 说明 |
+|---|---|
+| `schema.py` | `SkillEntry`（四要素+Evidence+Code Sketch）markdown 往返；`parse_findings`（E.3 schema）。 |
+| `library.py` | 文件系统库（`skill_library/`）+ index.json 原子更新；`admit()` 文件锁串行；`format_for_prompt()` 全量注入；`retrieve()` 关键词检索。 |
+| `synthesize.py` | findings→SKILL 审计管线：LLM 可复用性审计 + `check_api_compliance` AST 静态卡（契约 15+契约外 5+np+helper 之外禁调用）。 |
+
+### `web/`（Web UI 层，2026-08-10 新建，不锁）
+
+> cap-x `capx/web` 最小可用版复刻；导引见 `aspire/web/README.md`。
+
+| 文件 | 说明 |
+|---|---|
+| `server.py` | FastAPI：REST（status/skills/traces/run/stop）+ WS 事件流 + 静态托管；单活跃会话；线程→asyncio 事件总线。 |
+| `static/index.html` | 单页 SPA（零构建）：运行控制台/技能库/Traces 三栏。 |
+
+### `skill_library/`（仓库根，技能库数据，git 跟踪）
+
+> 5 条种子条目（2026-08-10，E.5 格式 + 本项目实测 Evidence）：grasping/piper_reach_and_grasp、
+> localization/sam3_prompt_cascade、motion/rrt_move_discipline、manipulation/wipe_serpentine_coverage、
+> debugging/trace_driven_repair。`index.json` 由库自动维护，勿手改。
+
+### `agent_runs/`（运行产物，gitignore）
+
+> agentic 运行产物：候选代码/leaderboard/task_analysis.md/findings.md/progress.json/各 run 的 traces/。
 
 ### `engine/`（执行引擎层 🔒）
 
@@ -154,6 +210,8 @@ aspire/
 | `README.md` | **任务层规范**（2026-08-10 定稿）：格式标准 + 新任务编写指南 + 服务依赖 + 常见坑。新任务先读它。 |
 | `stack.sh`（55 行） | Stack 可视化一键入口：`scripts/stack.sh [seed] [slowdown]`（seed 默认 $RANDOM，slow 默认 0.5=2 倍速）。预检 CGN :8117（须 model_loaded:true）+ pyroki :8116（任何 HTTP 应答即算活）；exec `python -m aspire.engine.engine_capx --code scripts/tasks/stack.py --task Stack --official-stack --render`。 |
 | `wipe.sh`（45 行） | Wipe 可视化一键入口（镜像 stack.sh）：**预检只查 pyroki**（无抓取规划故 CGN 不需要）；`--code scripts/tasks/wipe.py --task PiperWipeSpill`。 |
+| `agentic.sh` | **agentic coding 入口**（2026-08-10）：`scripts/agentic.sh actor|evosearch|coordinator <任务> [参数]`；预检 pyroki/CGN + LLM 配置提示（无 .env 时引导 file 桥接）。 |
+| `web.sh` | **Web UI 入口**（2026-08-10）：FastAPI+静态 SPA，`http://127.0.0.1:8200`。 |
 
 ### `tasks/`（任务代码，引擎注入执行）
 
@@ -167,6 +225,8 @@ aspire/
 | 文件 | 说明 |
 |---|---|
 | `test_piper_capx_api.py`（258 行） | **契约 15 函数全量自检，33 项**（A 观测结构 6 / B SAM3 2 / C 反投影标定 2 / D plan_grasp 3 / E 点提示 2 / F OBB 1 / G 运动 3 / H 夹爪 2 / I 类结构 4 / J 工具 5 / K select_top_down 3），全过 exit 0。GT 仅测试可用；C 区注释载"GT 尺寸从 model.geom_size 读勿硬编码"教训。 |
+| `test_agentic.py` | **agentic/skills 单元测试 44 项**（2026-08-10）：schema 往返/API 合规/库 CRUD 与并发串行/trace_digest 失败信号/llm_client（fence/collapse/mock/集成/anthropic 转换）/actor 修复闭环/evolve Algorithm 1 行为/coordinator 入库审计——全 mock LLM + fake executor，不碰仿真。 |
+| `test_agentic_e2e.py` | **agentic 端到端冒烟**（2026-08-10）：真实引擎 × mock LLM 重放 stack.py——fast path（seed 0）→ Stage 2（seed 1）→ findings → 审计入库冒烟条目（测后清理）。前置 CGN/pyroki 在线。 |
 
 ### `tools/`（资产生产线 / 查看器 / 常驻服务）
 
@@ -212,6 +272,7 @@ aspire/
 | `api_asset_map.md`（357 行） | **现役最高权威**：API 资产对照 + 进度看板（全勾）+ 🔒冻结/封版声明 + vendor 三层规则（L1 直拿/L2 重写/L3 自写）+ 移植配方（R0 铁律）+ 两轮审计结论。改 API 前必读。 |
 | `primitive_api_capx.md`（282 行） | **现役 API 权威参考**：契约 15 函数逐一签名/参数/返回/示例 + 坐标系与全局约定 + **三处有意偏差**（反投影 y 负号、joint_pos 为 (7,)、plan_grasp 返回基座系勿再左乘 pose_mat）+ 契约外成员 + 深度管线精度结论。 |
 | `roadmap.md` | **Phase 1 起路线图**（2026-08-07 提炼自已删除的 ASPIRE_REPRO_PLAN.md）：论文架构对照、Skill Library 需求依据（四要素/入库流程/种子素材）、Phase 1-4（Skill 库闭环/进化搜索/长程任务/真机 sim2real）+ 长期约束。**Skill Library / Agentic coding 模块的需求源头**。 |
+| `agentic_design.md` | **agentic coding + skill library 设计定稿**（2026-08-10）：论文条款（§2.1-2.3/Fig 2-3/App A/E.1-E.5/Algorithm 1）→ 实现落点逐条对照 + cap-x vendor 取舍 + 冻结层边界。改 agentic/skills/web 前必读。 |
 | `cgn_container.md`（306 行） | CGN 容器化部署全录（镜像构建/default-stream 竞态修复勿回退/已知现象/变换链两次修复/标注图 F2 定稿/Piper 净开度真值 70mm）。 |
 | `primitive_api.md`（287 行） | **存档**（Panda 旧线 API 文档 v0.3）：头部有存档警告，新任务一律以 cap-x 线文档为准。 |
 | `sam3_vision.md`（97 行） | SAM3 视觉模块文档：MobileSAM ONNX → SAM3 迁移三坑（NCCL cu12/cu13 互覆、onnxruntime 双包遮蔽、EGL wedge 自愈）+ 接口契约 + 回退方案。 |

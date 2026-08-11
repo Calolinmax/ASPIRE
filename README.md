@@ -20,6 +20,8 @@ Contact-GraspNet 做 6-DoF 抓取位姿估计，pyroki 做 IK，RRT-Connect 做�
 ```
 ┌─────────────────────────────── 宿主机（conda 环境 ASPIRE, py3.12）──────────────────────────────┐
 │  任务层   scripts/stack.sh + tasks/stack.py · wipe.sh + tasks/wipe.py（统一 sh 入口）           │
+│  Agentic  aspire/agentic/（LLM client/actor/coordinator/进化搜索）+ aspire/skills/（技能库）     │
+│           + aspire/web/（Web UI :8200）· 入口 scripts/agentic.sh / web.sh（2026-08-10 新建）    │
 │  API 层   aspire/api/primitives_capx.py      （PiperControlApiReduced, 15 函数, 🔒封版）        │
 │  执行层   aspire/engine/engine_capx.py + engine.py（执行引擎, 🔒）+ aspire/evidence/（trace）   │
 │  感知     aspire/perception/vision_sam3.py   → SAM3 本地权重（transformers, GPU ~8GB）          │
@@ -41,7 +43,8 @@ Contact-GraspNet 做 6-DoF 抓取位姿估计，pyroki 做 IK，RRT-Connect 做�
 
 | 路径 | 说明 |
 |---|---|
-| `aspire/` | 核心包，按层分目录：`engine/`（执行引擎）`api/`（Primitive API）`evidence/`（trace+标注）`planning/`（RRT+pyroki 客户端）`perception/`（SAM3/CGN 服务）`envs/`（场景）`robots/`（Piper 模型资产） |
+| `aspire/` | 核心包，按层分目录：`engine/`（执行引擎）`api/`（Primitive API）`evidence/`（trace+标注）`planning/`（RRT+pyroki 客户端）`perception/`（SAM3/CGN 服务）`envs/`（场景）`robots/`（Piper 模型资产）· **2026-08-10 新增**：`agentic/`（论文组件 3：LLM 生成/修复/进化搜索）`skills/`（组件 2：技能库）`web/`（Web UI） |
+| `skill_library/` | 技能库数据（组件 2 的知识文档，git 跟踪）：5 条种子条目 + index.json；运行产物在 `agent_runs/`（gitignore） |
 | `scripts/` | 任务层（统一 sh 入口，**规范见 [scripts/README.md](scripts/README.md)**）：`stack.sh`/`wipe.sh` 一键可视化 + `tasks/`（任务代码）`tests/`（自检）`tools/`（资产生产线/查看器/常驻服务）`archive/`（历史诊断） |
 | `docs/` | 设计与运维文档（API 契约、CGN 容器、SAM3、文件地图、路线图） |
 | `docker/cgn/` | CGN 容器构建资产存档（Dockerfile + 服务脚本 + 官方代码补丁），重建步骤见 [docs/env_rebuild.md](docs/env_rebuild.md) |
@@ -145,6 +148,8 @@ curl http://localhost:8117/health
 |---|---|
 | `scripts/stack.sh [seed] [slow]` | **Stack 任务一键可视化**（任务代码 `scripts/tasks/stack.py`） |
 | `scripts/wipe.sh [seed] [slow]` | **Wipe 任务一键可视化**（任务代码 `scripts/tasks/wipe.py`，Franka 擦板） |
+| `scripts/agentic.sh actor\|evosearch\|coordinator <任务>` | **Agentic coding**（LLM 生成/修复/进化搜索；LLM 配置见 `.env.example`，无 key 可 `--provider file` 人工桥接） |
+| `scripts/web.sh` | **Web UI**（http://127.0.0.1:8200：运行控制台/技能库/Traces 浏览） |
 | `scripts/tools/cgn_execute_grasp.py` | CGN 抓取端到端验收门（CLI 直驱，`--view` 开窗） |
 
 更多标定/诊断/可视化脚本见 `scripts/tools/` 与 `scripts/archive/`（逐文件说明
@@ -156,6 +161,7 @@ curl http://localhost:8117/health
 - [docs/external_assets.md](docs/external_assets.md) — **外部资产清单**（SAM3+external 逐项对齐：文件名/来源/摆放/注意事项）
 - [docs/project_files.md](docs/project_files.md) — 全项目逐文件说明（仓库地图）
 - [docs/roadmap.md](docs/roadmap.md) — Phase 1 起复现路线图（Skill Library / 进化搜索 / 真机）
+- [docs/agentic_design.md](docs/agentic_design.md) — **Agentic coding + Skill Library 设计**（论文条款→实现落点对照）
 - [docs/api_asset_map.md](docs/api_asset_map.md) — API 资产对照表 + 进度看板（含 🔒 冻结声明）
 - [docs/sam3_vision.md](docs/sam3_vision.md) — SAM3 视觉模块
 - [docs/cgn_container.md](docs/cgn_container.md) — CGN 容器化部署

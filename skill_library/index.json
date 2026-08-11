@@ -1,0 +1,58 @@
+{
+  "skills": {
+    "sam3_prompt_cascade": {
+      "category": "localization",
+      "status": "admitted",
+      "path": "localization/sam3_prompt_cascade.md",
+      "description": "SAM3 开放词汇定位的级联兜底与掩码过滤纪律——文本→molmo 点→点提示分割，面积过滤排臂",
+      "origin_tasks": [
+        "Stack",
+        "PiperWipeSpill"
+      ],
+      "updated": "2026-08-10"
+    },
+    "piper_reach_and_grasp": {
+      "category": "grasping",
+      "status": "admitted",
+      "path": "grasping/piper_reach_and_grasp.md",
+      "description": "Piper 6 轴臂的可达性与抓取姿态纪律——腕限位死区、x>0.45 不可达、min_z 抓取基准、夹取验证",
+      "origin_tasks": [
+        "Stack",
+        "PiperWipeSpill"
+      ],
+      "updated": "2026-08-10"
+    },
+    "rrt_move_discipline": {
+      "category": "motion",
+      "status": "admitted",
+      "path": "motion/rrt_move_discipline.md",
+      "description": "运动规划纪律——凡动必避障（execute_legs_rrt）、先算后动、接触段 graze 容差、响亮失败",
+      "origin_tasks": [
+        "Stack",
+        "PiperWipeSpill"
+      ],
+      "updated": "2026-08-10"
+    },
+    "trace_driven_repair": {
+      "category": "debugging",
+      "status": "admitted",
+      "path": "debugging/trace_driven_repair.md",
+      "description": "从 trace.json 定位失败的读图纪律——症状→原因对照表、首个失败信号原则、3 次 replay 上限",
+      "origin_tasks": [
+        "Stack",
+        "PiperWipeSpill"
+      ],
+      "updated": "2026-08-10"
+    },
+    "wipe_serpentine_coverage": {
+      "category": "manipulation",
+      "status": "admitted",
+      "path": "manipulation/wipe_serpentine_coverage.md",
+      "description": "擦拭/覆盖类任务的双程蛇形路径 + 38° 滚转锁定 + 软接触参数族",
+      "origin_tasks": [
+        "PiperWipeSpill"
+      ],
+      "updated": "2026-08-11"
+    }
+  }
+}

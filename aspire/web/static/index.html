@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>ASPIRE — Agentic Coding Console</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#c9d1d9; --dim:#8b949e;
+        --accent:#58a6ff; --ok:#3fb950; --fail:#f85149; --warn:#d29922; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 -apple-system,"Segoe UI",Roboto,"Noto Sans SC",sans-serif; }
+header { display:flex; align-items:center; gap:16px; padding:10px 20px; background:var(--panel); border-bottom:1px solid var(--border); }
+header h1 { font-size:16px; margin:0; color:var(--accent); letter-spacing:1px; }
+header .status { font-size:12px; color:var(--dim); }
+.dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; }
+.dot.ok { background:var(--ok); } .dot.bad { background:var(--fail); } .dot.warn { background:var(--warn); }
+nav { display:flex; gap:4px; padding:8px 20px 0; }
+nav button { background:none; border:none; color:var(--dim); padding:8px 16px; cursor:pointer; font-size:14px; border-bottom:2px solid transparent; }
+nav button.active { color:var(--fg); border-bottom-color:var(--accent); }
+main { padding:16px 20px; }
+.tab { display:none; } .tab.active { display:block; }
+.panel { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px; margin-bottom:14px; }
+.row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+select,input,button.act { background:#0d1117; color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:6px 10px; font-size:13px; }
+button.act { cursor:pointer; background:#21262d; }
+button.act:hover { border-color:var(--accent); }
+button.act.primary { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+button.act.danger { background:#da3633; border-color:#da3633; color:#fff; }
+#events { max-height:62vh; overflow-y:auto; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; }
+.ev { padding:6px 10px; border-left:3px solid var(--border); margin:6px 0; background:#0d1117; border-radius:0 6px 6px 0; white-space:pre-wrap; word-break:break-all; }
+.ev .t { color:var(--dim); margin-right:8px; }
+.ev.stage, .ev.run_status { border-left-color:var(--accent); }
+.ev.eval_done { border-left-color:var(--ok); }
+.ev.error { border-left-color:var(--fail); color:var(--fail); }
+.ev.llm_response { border-left-color:var(--warn); max-height:300px; overflow-y:auto; }
+.ev.audit_done { border-left-color:var(--ok); color:var(--ok); }
+.ev.seed_result { border-left-color:var(--warn); }
+#seeds table { font-size:12.5px; }
+.seedcell { display:inline-block; min-width:110px; padding:3px 8px; margin:2px; border-radius:5px; font-size:12px; background:#0d1117; border:1px solid var(--border); }
+.seedcell.ok { border-color:var(--ok); color:var(--ok); }
+.seedcell.fail { border-color:var(--fail); color:var(--fail); }
+.skill-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:10px; }
+.skill-card { background:#0d1117; border:1px solid var(--border); border-radius:8px; padding:12px; cursor:pointer; }
+.skill-card:hover { border-color:var(--accent); }
+.skill-card .cat { color:var(--accent); font-size:12px; }
+.skill-card .desc { color:var(--dim); font-size:12px; margin-top:4px; }
+pre.md { background:#0d1117; border:1px solid var(--border); border-radius:8px; padding:14px; overflow-x:auto; white-space:pre-wrap; font-size:12.5px; }
+.trace-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:8px; }
+.trace-grid img { width:100%; border-radius:6px; border:1px solid var(--border); cursor:pointer; }
+.trace-grid img:hover { border-color:var(--accent); }
+.badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; }
+.badge.ok { background:#238636; color:#fff; } .badge.fail { background:#da3633; color:#fff; }
+table { border-collapse:collapse; width:100%; font-size:13px; }
+th,td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); }
+th { color:var(--dim); font-weight:600; }
+.modal { position:fixed; inset:0; background:rgba(0,0,0,.8); display:none; align-items:center; justify-content:center; z-index:10; }
+.modal img { max-width:92vw; max-height:92vh; }
+.modal.show { display:flex; }
+h3 { margin:6px 0 10px; font-size:14px; color:var(--dim); text-transform:uppercase; letter-spacing:1px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ASPIRE</h1>
+  <span class="status" id="llm-status">LLM: ...</span>
+  <span class="status" id="svc-status">services: ...</span>
+  <span class="status" id="run-status"></span>
+</header>
+<nav>
+  <button class="active" data-tab="run">运行</button>
+  <button data-tab="skills">技能库 <span id="skill-count"></span></button>
+  <button data-tab="traces">Traces</button>
+</nav>
+<main>
+  <div class="tab active" id="tab-run">
+    <div class="panel row">
+      <select id="mode">
+        <option value="evosearch" selected>evosearch（进化搜索：K 候选并行评估）</option>
+        <option value="actor">actor（单轨迹修复闭环 E.3）</option>
+        <option value="coordinator">coordinator（多任务+入库审批）</option>
+      </select>
+      <select id="task">
+        <option value="Stack">Stack</option>
+        <option value="PiperWipeSpill">PiperWipeSpill</option>
+      </select>
+      <label>K <input id="K" type="number" value="4" style="width:50px"></label>
+      <label>T <input id="T" type="number" value="5" style="width:50px"></label>
+      <label>seeds <input id="seeds" value="0,1,2" style="width:80px"></label>
+      <label>heldout <input id="heldout" value="3,4,5,6,7" style="width:110px"></label>
+      <label><input id="no-baseline" type="checkbox"> 无基线</label>
+      <button class="act primary" id="btn-start">▶ 启动</button>
+      <button class="act danger" id="btn-stop">■ 停止</button>
+    </div>
+    <div class="panel"><h3>实时评估（逐 seed）</h3><div id="seeds"></div></div>
+    <div class="panel"><h3>事件流</h3><div id="events"></div></div>
+  </div>
+  <div class="tab" id="tab-skills">
+    <div class="panel"><h3>Skill Library</h3><div class="skill-list" id="skill-list"></div></div>
+    <div id="skill-detail"></div>
+  </div>
+  <div class="tab" id="tab-traces">
+    <div class="panel"><h3>最近 Traces</h3><div id="trace-table"></div></div>
+    <div id="trace-detail"></div>
+  </div>
+</main>
+<div class="modal" id="modal" onclick="this.classList.remove('show')"><img id="modal-img"></div>
+<script>
+const $ = s => document.querySelector(s);
+// ---------- tab 切换 ----------
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  $('#tab-' + b.dataset.tab).classList.add('active');
+  if (b.dataset.tab === 'skills') loadSkills();
+  if (b.dataset.tab === 'traces') loadTraces();
+});
+// ---------- 状态轮询 ----------
+async function poll() {
+  try {
+    const s = await (await fetch('/api/status')).json();
+    $('#llm-status').innerHTML = `<span class="dot ${s.llm.configured ? 'ok' : 'bad'}"></span>` +
+      `LLM: ${s.llm.provider}/${s.llm.model}${s.llm.configured ? '' : '（未配置 key，见 .env）'}`;
+    $('#skill-count').textContent = `(${s.skills.admitted})`;
+    $('#run-status').textContent = s.run.active ? '● running' : '';
+  } catch(e) {}
+  try {
+    const v = await (await fetch('/api/services')).json();
+    const d = (ok, name) => `<span class="dot ${ok ? 'ok' : 'warn'}"></span>${name}`;
+    $('#svc-status').innerHTML = 'services: ' +
+      d(v.vision === 'healthy', 'vision') + ' ' + d(v.pyroki, 'pyroki') + ' ' + d(v.cgn, 'cgn');
+  } catch(e) {}
+}
+poll(); setInterval(poll, 5000);
+// ---------- 事件流（WebSocket） ----------
+const seedBoard = {};   // "name seed" → cell element
+function renderSeed(e) {
+  const key = e.name + '/' + e.seed;
+  let cell = seedBoard[key];
+  if (!cell) {
+    cell = document.createElement('span');
+    seedBoard[key] = cell;
+    $('#seeds').appendChild(cell);
+  }
+  cell.className = 'seedcell ' + (e.success ? 'ok' : 'fail');
+  cell.textContent = `${e.name} s${e.seed}: ${e.success ? 'OK' : 'FAIL'} ${e.wall_time}s`;
+  if (!e.success && e.trace_path) {
+    cell.style.cursor = 'pointer';
+    cell.title = e.error_line || '';
+    cell.onclick = () => showTrace(e.trace_path) || document.querySelector('[data-tab=traces]').click();
+  }
+}
+function addEvent(e) {
+  if (e.type === 'replay') { addEvent(e.event); return; }
+  if (e.type === 'seed_result') { renderSeed(e); }
+  if (e.type === 'eval_start') { Object.keys(seedBoard).forEach(k => delete seedBoard[k]); $('#seeds').innerHTML = ''; }
+  const div = document.createElement('div');
+  div.className = 'ev ' + e.type;
+  let body = e.text || e.detail || e.purpose || e.error || '';
+  if (e.type === 'llm_response') body = (e.content || '').slice(0, 3000);
+  if (e.type === 'run_status') body = e.status + (e.error ? ': ' + e.error : '') +
+    (e.result_status ? ' → ' + e.result_status : '') + (e.run_dir ? '\n' + e.run_dir : '');
+  if (e.type === 'audit_done') {
+    const rej = (e.rejected || []).map(r => `  ✗ ${r.name}: ${(r.reason || '').slice(0, 300)}`).join('\n');
+    body = `入库审批（coordinator 守门）\n  ✓ admitted: ${(e.admitted || []).join(', ') || '(无)'}\n` +
+      (rej ? '  rejected:\n' + rej : '');
+  }
+  if (e.type === 'audit_start') body = `审计 ${e.task} 的 findings（agent 申请 → coordinator 审核）`;
+  if (e.type === 'eval_done') body = `${e.name || ''} ${e.detail || ('rate=' + e.rate)}`;
+  if (e.type === 'eval_start') body = `评估 ${e.name} seeds=${JSON.stringify(e.seeds)}`;
+  if (e.type === 'seed_result') return;  // 只上面板，不进事件流
+  if (e.type === 'services') body = `vision=${e.vision} pyroki=${e.pyroki} cgn=${e.cgn}`;
+  if (e.type === 'dispatch') body = `分派任务 ${e.task} (${e.mode})`;
+  div.innerHTML = `<span class="t">${e.ts || ''}</span><b>${e.type}</b> ` +
+    body.replace(/</g, '&lt;');
+  const box = $('#events');
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = m => addEvent(JSON.parse(m.data));
+  ws.onclose = () => setTimeout(connect, 2000);
+}
+connect();
+// ---------- 启动/停止 ----------
+$('#btn-start').onclick = async () => {
+  const params = { mode: $('#mode').value, task: $('#task').value,
+    K: +$('#K').value, T: +$('#T').value, seeds: $('#seeds').value,
+    heldout: $('#heldout').value, no_baseline: $('#no-baseline').checked };
+  if ($('#mode').value === 'coordinator') params.tasks = [$('#task').value];
+  const r = await (await fetch('/api/run', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify(params)})).json();
+  if (!r.ok) alert(r.message);
+};
+$('#btn-stop').onclick = () => fetch('/api/stop', {method:'POST'});
+// ---------- 技能库 ----------
+async function loadSkills() {
+  const d = await (await fetch('/api/skills')).json();
+  $('#skill-list').innerHTML = d.skills.map(s =>
+    `<div class="skill-card" onclick="showSkill('${s.name}')">
+      <div><b>${s.name}</b> <span class="badge ${s.status==='admitted'?'ok':'fail'}">${s.status}</span></div>
+      <div class="cat">${s.category}</div><div class="desc">${s.description || ''}</div>
+      <div class="desc">origin: ${(s.origin_tasks||[]).join(', ')}</div>
+    </div>`).join('') || '<span style="color:var(--dim)">（空库——跑一轮 actor 后由 coordinator 入库）</span>';
+}
+async function showSkill(name) {
+  const d = await (await fetch('/api/skills/' + name)).json();
+  $('#skill-detail').innerHTML = `<pre class="md">${d.markdown.replace(/</g,'&lt;')}</pre>`;
+}
+// ---------- traces ----------
+async function loadTraces() {
+  const d = await (await fetch('/api/traces')).json();
+  $('#trace-table').innerHTML = '<table><tr><th>目录</th><th>任务</th><th>seed</th><th>结果</th><th>calls</th></tr>' +
+    d.traces.map(t => `<tr style="cursor:pointer" onclick="showTrace('${t.trace_path}')">
+      <td>${t.dir}</td><td>${t.task}</td><td>${t.seed}</td>
+      <td><span class="badge ${t.success?'ok':'fail'}">${t.success?'OK':'FAIL'}</span></td>
+      <td>${t.n_records}</td></tr>`).join('') + '</table>';
+}
+async function showTrace(path) {
+  const t = await (await fetch('/api/trace_detail?path=' + encodeURIComponent(path))).json();
+  const dir = path.replace(/\/trace\.json$/, '');
+  let imgs = [];
+  (t.records || []).forEach(r => {
+    if (r.annotation) imgs.push([`#${r.seq} ${r.name} overlay`, r.annotation]);
+    if (r.visual_evidence && r.visual_evidence.top) imgs.push([`#${r.seq} ${r.name} before`, r.visual_evidence.top]);
+    if (r.visual_evidence_after && r.visual_evidence_after.top) imgs.push([`#${r.seq} ${r.name} after`, r.visual_evidence_after.top]);
+  });
+  $('#trace-detail').innerHTML = `<div class="panel"><h3>${dir} — ${t.success?'SUCCESS':'FAIL'}</h3>` +
+    `<pre class="md">${(t.error||'').slice(-800).replace(/</g,'&lt;')}</pre>` +
+    '<div class="trace-grid">' + imgs.slice(0, 60).map(([cap, rel]) =>
+      `<div><img loading="lazy" src="/api/trace_image?trace=${encodeURIComponent(dir)}&rel=${encodeURIComponent(rel)}"
+        onclick="event.stopPropagation();$('#modal-img').src=this.src;$('#modal').classList.add('show')">
+        <div style="font-size:11px;color:var(--dim)">${cap}</div></div>`).join('') + '</div></div>';
+}
+</script>
+</body>
+</html>
