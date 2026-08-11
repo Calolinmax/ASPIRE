@@ -157,6 +157,7 @@ curl http://localhost:8117/health
 
 ## 7. 文档索引
 
+- [HANDOVER.md](HANDOVER.md) — **交接文档**（项目位置 / 详细介绍 / 操作指南，接手人入口）
 - [docs/env_rebuild.md](docs/env_rebuild.md) — **换新机器完整恢复指南**（含旧机器备份清单）
 - [docs/external_assets.md](docs/external_assets.md) — **外部资产清单**（SAM3+external 逐项对齐：文件名/来源/摆放/注意事项）
 - [docs/project_files.md](docs/project_files.md) — 全项目逐文件说明（仓库地图）
