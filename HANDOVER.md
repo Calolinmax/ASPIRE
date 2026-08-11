@@ -7,23 +7,23 @@
 
 ## 一、项目位置
 
-### 1.1 代码与文档（GitHub）
+### 1.1 代码与文档
 
-| 项 | 位置 |
-|---|---|
-| 仓库 | https://github.com/Calolinmax/ASPIRE （**私有**，master 分支） |
-| 首页说明 | `README.md`（架构图、安装、验证、FAQ） |
-| 专题文档 | `docs/`（8 份，导引见 `docs/README.md`） |
-| 逐文件地图 | `docs/project_files.md`；每个目录另有自己的 `README.md` |
-| 本机工作副本 | `/home/stouching/Desktop/ASPIRE`（旧开发机） |
+| 项           | 位置                                                        |
+| ------------ | ----------------------------------------------------------- |
+| 项目根目录   | `/home/stouching/Desktop/ASPIRE`（开发机；git 管理，含完整提交历史） |
+| 首页说明     | `README.md`（架构图、安装、验证、FAQ）                    |
+| 交接文档     | `HANDOVER.md`（本文）                                     |
+| 专题文档     | `docs/`（导引见 `docs/README.md`）                       |
+| 逐文件地图   | `docs/project_files.md`；每个目录另有自己的 `README.md` |
 
-### 1.2 大文件（不在 GitHub，需单独获取）
+### 1.2 大文件（不入 git 库，需单独获取）
 
-| 资产 | 位置/来源 | 大小 |
-|---|---|---|
-| SAM3 视觉权重 | 本机 `SAM3/`；重下：HuggingFace `facebook/sam3`（gated） | 6.6G |
-| external/ 第三方资产 | 本机 `external/`；来源逐项见 **`docs/external_assets.md`** | 8.5G |
-| CGN docker 镜像 | 本机 `sudo docker images` 的 `cgn-tf:25.02`；重建方法见 `docker/cgn/README.md` | ~10G 级 |
+| 资产                 | 位置/来源                                                                           | 大小    |
+| -------------------- | ----------------------------------------------------------------------------------- | ------- |
+| SAM3 视觉权重        | 本机 `SAM3/`；重下：HuggingFace `facebook/sam3`（gated）                        | 6.6G    |
+| external/ 第三方资产 | 本机 `external/`；来源逐项见 **`docs/external_assets.md`**                  | 8.5G    |
+| CGN docker 镜像      | 本机 `sudo docker images` 的 `cgn-tf:25.02`；重建方法见 `docker/cgn/README.md` | ~10G 级 |
 
 > 精确到文件名的对齐说明、钉版 commit、注意事项全部在
 > [docs/external_assets.md](docs/external_assets.md)——**恢复环境先看它**。
@@ -55,13 +55,13 @@ evolve 技能进化 + web 面板）。
 
 ### 2.2 当前进展（截至 2026-08-11）
 
-| 里程碑 | 状态 | 证据/入口 |
-|---|---|---|
-| Phase 0：API 层封版 | ✅ 15 函数契约 + 自检 **33/33**（2026-08-06 封版） | `aspire/api/primitives_capx.py`、`docs/api_asset_map.md` |
-| Stack 任务线 | ✅ 端到端 PASS | `scripts/stack.sh` |
-| Wipe 任务线 | ✅ 端到端 PASS（PiperWipeSpill 场景） | `scripts/wipe.sh` |
-| 组件 2+3：agentic + 技能库 + web | ✅ 单测 44/44 + E2E + API 回归全过（2026-08-10/11） | `aspire/agentic|skills|web`、`SESSION_REPORT_2026-08-11.md` |
-| 技能库 A/B 实证 | ✅ 无技能全灭 ↔ 有技能 wipe 一击 3/3 | `skill_library/manipulation/wipe_serpentine_coverage.md` |
+| 里程碑                           | 状态                                                    | 证据/入口                                                    |
+| -------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------ |
+| Phase 0：API 层封版              | ✅ 15 函数契约 + 自检 **33/33**（2026-08-06 封版） | `aspire/api/primitives_capx.py`、`docs/api_asset_map.md` |
+| Stack 任务线                     | ✅ 端到端 PASS                                          | `scripts/stack.sh`                                         |
+| Wipe 任务线                      | ✅ 端到端 PASS（PiperWipeSpill 场景）                   | `scripts/wipe.sh`                                          |
+| 组件 2+3：agentic + 技能库 + web | ✅ 单测 44/44 + E2E + API 回归全过（2026-08-10/11）     | `aspire/agentic/`、`aspire/skills/`、`aspire/web/`、`SESSION_REPORT_2026-08-11.md` |
+| 技能库 A/B 实证                  | ✅ 无技能全灭 ↔ 有技能 wipe 一击 3/3                   | `skill_library/manipulation/wipe_serpentine_coverage.md`   |
 
 ### 2.3 关键决策与硬踩过的坑（为什么长这样）
 
@@ -69,7 +69,7 @@ evolve 技能进化 + web 面板）。
    详见 [docs/sam3_vision.md](docs/sam3_vision.md)
 2. **CGN 必须 Docker**：RTX 5090（sm_120）与 TF pip wheel 系统性不兼容，宿主机直跑
    随机崩显存（`CUDA_ERROR_ILLEGAL_ADDRESS`）。容器内另有 pointnet2 stream 竞态修复
-   （2 个本地提交，**官方仓库没有**，已 bundle 入库）。详见 [docs/cgn_container.md](docs/cgn_container.md)
+   （2 个本地提交，**官方仓库没有**，已 bundle 存于 `docker/cgn/`）。详见 [docs/cgn_container.md](docs/cgn_container.md)
 3. **运动规划选 RRT-Connect 弃 cuRobo**：球体包络在 6.7mm 贴脸跨指场景不可用 +
    安装风险（裁决记录见 `docs/api_asset_map.md` §0.6）
 4. **渲染深度偏短 2.1cm@59cm**：已表征、测试阈值已标定，根因修复未定（渲染侧冻结区）
@@ -136,27 +136,21 @@ LLM 配置：复制 `.env.example` 为 `.env` 填入 key（当前用 Kimi coding
 
 ### 3.3 踩坑速查（详细版在 README §8 与 external_assets §9）
 
-| 症状 | 处置 |
-|---|---|
+| 症状                    | 处置                                                                                   |
+| ----------------------- | -------------------------------------------------------------------------------------- |
 | `ncclCommResume` 报错 | `pip install --force-reinstall --no-deps nvidia-nccl-cu13==2.29.7 nvidia-cudnn-cu13` |
-| 渲染条纹/黑帧 | EGL wedge 已自愈；仍异常重启进程 |
-| HF 下载 403 | gated repo，网页授权 + `hf auth login` |
-| git push 报"仓库不存在" | Clash Verge **TUN 模式会拦 SSH**——关掉 TUN 再推 |
-| 换机后路径报错 | 三处写死路径要改：`vision_sam3.py:19`、`stack.sh:28`、`wipe.sh:25` |
-| CGN 想宿主机直跑 | **禁止**，只走 Docker（见 §2.3-2） |
+| 渲染条纹/黑帧           | EGL wedge 已自愈；仍异常重启进程                                                       |
+| HF 下载 403             | gated repo，网页授权 + `hf auth login`                                               |
+| 换机后路径报错          | 三处写死路径要改：`vision_sam3.py:19`、`stack.sh:28`、`wipe.sh:25`               |
+| CGN 想宿主机直跑        | **禁止**，只走 Docker（见 §2.3-2）                                              |
+| 代理导致 git/网络异常   | Clash Verge 的 TUN 模式会拦 SSH 协议，关掉 TUN 再试                                 |
 
-### 3.4 Git 操作
+### 3.4 Git 操作（本机）
 
-- 推送：本机已配 `github-calolinmax` SSH 别名，`git push` 直用；
-  新机器把新公钥加到 Calolinmax 账号即可
+- 项目用 git 管理，完整提交历史在 `.git/`；日常 `git status` / `git add` / `git commit` 即可
+- 交接打包：直接拷贝整个项目目录（**含 `.git`** 就有全部历史），
+  或 `git archive HEAD -o aspire_snapshot.tar.gz` 出干净快照（不含历史）
 - 边界：`SAM3/ external/ outputs/ traces/ agent_runs/ .env 笔记.pdf` 均被
-  gitignore——**不要强塞大文件进库**（GitHub 单文件 100MB 上限）
+  gitignore——**不要强塞大文件进库**（git 托管平台通常有单文件 100MB 上限）
 
 ---
-
-## 附：交接待办（原负责人填写）
-
-- [ ] 接手人 / 联系方式：
-- [ ] 仓库权限安排（加协作者 / 转移 / 保持现状）：
-- [ ] `traces/`、`outputs/`、`笔记.pdf` 等本地产物归属：
-- [ ] 未尽事项优先级共识（roadmap 哪条先做）：
